@@ -1,0 +1,155 @@
+import type { Category, TransactionType } from '@/types/database'
+
+/**
+ * Determines the transaction type (income/expense) based on QuickBooks transaction type.
+ * This is used to match against categories of the appropriate type.
+ */
+export function getTransactionTypeFromQB(qbTransactionType: string | null): TransactionType {
+  if (!qbTransactionType) return 'expense'
+
+  const type = qbTransactionType.toLowerCase()
+
+  // Income types in QuickBooks
+  const incomeTypes = [
+    'deposit',
+    'payment',
+    'invoice',
+    'sales receipt',
+    'credit',
+    'refund',
+    'sales',
+    'income',
+  ]
+
+  // Expense types in QuickBooks
+  const expenseTypes = [
+    'check',
+    'bill',
+    'expense',
+    'credit card',
+    'debit',
+    'purchase',
+    'bill payment',
+    'credit card charge',
+    'credit card credit',
+  ]
+
+  // Transfer types
+  const transferTypes = ['transfer', 'journal entry']
+
+  if (incomeTypes.some((t) => type.includes(t))) {
+    return 'income'
+  }
+
+  if (expenseTypes.some((t) => type.includes(t))) {
+    return 'expense'
+  }
+
+  if (transferTypes.some((t) => type.includes(t))) {
+    return 'transfer'
+  }
+
+  // Default to expense
+  return 'expense'
+}
+
+/**
+ * Finds a matching category for a transaction based on its QB "Account full name"
+ * and transaction type.
+ *
+ * @param qbAccount - The QuickBooks "Account full name" from the transaction
+ * @param qbTransactionType - The QuickBooks transaction type (Check, Deposit, etc.)
+ * @param categories - User's categories with their qb_category_names mappings
+ * @returns The category_id if a match is found, null otherwise
+ */
+export function findCategoryForTransaction(
+  qbAccount: string | null,
+  qbTransactionType: string | null,
+  categories: Category[]
+): string | null {
+  if (!qbAccount || !qbAccount.trim()) {
+    return null
+  }
+
+  const normalizedAccount = qbAccount.toLowerCase().trim()
+  const transactionType = getTransactionTypeFromQB(qbTransactionType)
+
+  // Find a category that:
+  // 1. Has the qbSplit name in its qb_category_names array (case-insensitive)
+  // 2. Matches the transaction type (income categories for deposits, expense for checks, etc.)
+  for (const category of categories) {
+    // Check if this category's type matches the transaction type
+    // Allow 'transfer' type to match either income or expense categories
+    if (category.type !== transactionType && transactionType !== 'transfer') {
+      continue
+    }
+
+    // Check if qb_category_names contains this QB account name
+    if (category.qb_category_names && Array.isArray(category.qb_category_names)) {
+      const hasMatch = category.qb_category_names.some(
+        (name) => name.toLowerCase().trim() === normalizedAccount
+      )
+      if (hasMatch) {
+        return category.id
+      }
+    }
+  }
+
+  return null
+}
+
+/**
+ * Gets a mapping of QB account names to their transaction counts from a list of transactions.
+ * Useful for the mapping UI to show which QB accounts need to be mapped.
+ */
+export interface QBAccountInfo {
+  accountName: string
+  count: number
+  transactionTypes: Set<string>
+  categoryId: string | null
+}
+
+export function getQBAccountStats(
+  transactions: Array<{
+    qb_split: string | null
+    qb_transaction_type: string | null
+    category_id: string | null
+  }>
+): QBAccountInfo[] {
+  const accountMap = new Map<
+    string,
+    { count: number; transactionTypes: Set<string>; categoryId: string | null }
+  >()
+
+  for (const t of transactions) {
+    const accountName = t.qb_split?.trim()
+    if (!accountName) continue
+
+    const existing = accountMap.get(accountName)
+    if (existing) {
+      existing.count++
+      if (t.qb_transaction_type) {
+        existing.transactionTypes.add(t.qb_transaction_type)
+      }
+      // Track if any are categorized
+      if (t.category_id && !existing.categoryId) {
+        existing.categoryId = t.category_id
+      }
+    } else {
+      accountMap.set(accountName, {
+        count: 1,
+        transactionTypes: new Set(t.qb_transaction_type ? [t.qb_transaction_type] : []),
+        categoryId: t.category_id,
+      })
+    }
+  }
+
+  return Array.from(accountMap.entries())
+    .map(([accountName, info]) => ({
+      accountName,
+      count: info.count,
+      transactionTypes: info.transactionTypes,
+      categoryId: info.categoryId,
+    }))
+    .sort((a, b) => b.count - a.count)
+}
