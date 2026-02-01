@@ -1,4 +1,7 @@
-import { createClient } from '@/lib/supabase/server'
+'use client'
+
+import { useState, useEffect } from 'react'
+import { createClient } from '@/lib/supabase/client'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { ExpenseDonutChart } from '@/components/charts/expense-donut-chart'
 import {
@@ -10,88 +13,156 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { startOfMonth, endOfMonth, format } from 'date-fns'
+import { Loader2 } from 'lucide-react'
+import {
+  aggregateByParentCategory,
+  aggregateBySubcategory,
+  type AggregatedCategory,
+} from '@/lib/category-utils'
 import type { Transaction, Category } from '@/types/database'
 
+// Colorful palette for expense categories
+const CATEGORY_COLORS = [
+  '#ef4444', // red
+  '#f97316', // orange
+  '#eab308', // yellow
+  '#22c55e', // green
+  '#14b8a6', // teal
+  '#3b82f6', // blue
+  '#8b5cf6', // violet
+  '#ec4899', // pink
+  '#06b6d4', // cyan
+  '#84cc16', // lime
+]
+
 type TransactionWithCategory = Transaction & {
-  category: Pick<Category, 'name' | 'color'>[] | null
+  category: Pick<Category, 'id' | 'name' | 'color' | 'parent_id'> | null
 }
 
-type CategoryTotal = {
-  category_id: string | null
-  amount: number
-  category: Pick<Category, 'name' | 'color'>[] | null
-}
+type ViewTier = 'parent' | 'subcategory'
 
-export default async function ExpensesPage() {
-  const supabase = await createClient()
+export default function ExpensesPage() {
+  const supabase = createClient()
+  const [transactions, setTransactions] = useState<TransactionWithCategory[]>([])
+  const [categories, setCategories] = useState<Category[]>([])
+  const [loading, setLoading] = useState(true)
+  const [viewTier, setViewTier] = useState<ViewTier>('parent')
 
   const now = new Date()
   const monthStart = startOfMonth(now)
   const monthEnd = endOfMonth(now)
 
-  // Get expense transactions for current month
-  const { data: transactions } = await supabase
-    .from('transactions')
-    .select(`
-      *,
-      category:categories(name, color)
-    `)
-    .eq('transaction_type', 'expense')
-    .gte('transaction_date', monthStart.toISOString().split('T')[0])
-    .lte('transaction_date', monthEnd.toISOString().split('T')[0])
-    .order('transaction_date', { ascending: false })
-    .limit(100)
+  useEffect(() => {
+    loadData()
+  }, [])
 
-  // Get expense categories with totals
-  const { data: categoryTotals } = await supabase
-    .from('transactions')
-    .select(`
-      category_id,
-      amount,
-      category:categories(name, color)
-    `)
-    .eq('transaction_type', 'expense')
-    .gte('transaction_date', monthStart.toISOString().split('T')[0])
-    .lte('transaction_date', monthEnd.toISOString().split('T')[0])
+  const loadData = async () => {
+    setLoading(true)
 
-  // Aggregate by category
-  const categoryMap = new Map<string, { name: string; value: number; color: string }>()
-  const totals = (categoryTotals || []) as CategoryTotal[]
+    const [transactionsRes, categoriesRes] = await Promise.all([
+      supabase
+        .from('transactions')
+        .select(`
+          *,
+          category:categories!category_id(id, name, color, parent_id)
+        `)
+        .eq('transaction_type', 'expense')
+        .gte('transaction_date', monthStart.toISOString().split('T')[0])
+        .lte('transaction_date', monthEnd.toISOString().split('T')[0])
+        .order('transaction_date', { ascending: false })
+        .limit(100),
+      supabase.from('categories').select('*'),
+    ])
 
-  totals.forEach((t) => {
-    const cat = t.category?.[0]
-    const categoryName = cat?.name || 'Uncategorized'
-    const color = cat?.color || '#6b7280'
-    const existing = categoryMap.get(categoryName)
-
-    if (existing) {
-      existing.value += Math.abs(Number(t.amount))
-    } else {
-      categoryMap.set(categoryName, {
-        name: categoryName,
-        value: Math.abs(Number(t.amount)),
-        color,
-      })
+    if (transactionsRes.data) {
+      setTransactions(transactionsRes.data as TransactionWithCategory[])
     }
-  })
+    if (categoriesRes.data) {
+      setCategories(categoriesRes.data)
+    }
 
-  const expensesByCategory = Array.from(categoryMap.values())
-    .sort((a, b) => b.value - a.value)
+    setLoading(false)
+  }
 
-  const totalExpenses = expensesByCategory.reduce((sum, e) => sum + e.value, 0)
+  // Aggregate by category based on view tier
+  const getAggregatedData = (): AggregatedCategory[] => {
+    const transactionsWithCategory = transactions.map((t) => {
+      const cat = t.category
+      // Look up parent from categories list if category has a parent_id
+      const parentCat = cat?.parent_id
+        ? categories.find((c) => c.id === cat.parent_id)
+        : null
 
-  // Top expense categories
+      return {
+        amount: Number(t.amount),
+        category: cat
+          ? {
+              id: cat.id,
+              name: cat.name,
+              color: cat.color,
+              parent_id: cat.parent_id,
+              parent: parentCat
+                ? { id: parentCat.id, name: parentCat.name, color: parentCat.color }
+                : null,
+            }
+          : null,
+      }
+    })
+
+    if (viewTier === 'parent') {
+      return aggregateByParentCategory(transactionsWithCategory, categories)
+    } else {
+      return aggregateBySubcategory(transactionsWithCategory)
+    }
+  }
+
+  const expensesByCategory = getAggregatedData()
+  const totalExpenses = expensesByCategory.reduce((sum, e) => sum + e.total, 0)
   const topCategories = expensesByCategory.slice(0, 5)
+
+  // Convert to chart format with colorful fallbacks
+  const chartData = expensesByCategory.map((cat, index) => ({
+    name: cat.name,
+    value: cat.total,
+    color: cat.color || CATEGORY_COLORS[index % CATEGORY_COLORS.length],
+  }))
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin" />
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Expenses</h1>
-        <p className="text-muted-foreground">
-          Track and analyze your spending for {format(now, 'MMMM yyyy')}
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Expenses</h1>
+          <p className="text-muted-foreground">
+            Track and analyze your spending for {format(now, 'MMMM yyyy')}
+          </p>
+        </div>
+        <div className="flex gap-1 bg-muted p-1 rounded-lg">
+          <Button
+            variant={viewTier === 'parent' ? 'default' : 'ghost'}
+            size="sm"
+            onClick={() => setViewTier('parent')}
+          >
+            Summary
+          </Button>
+          <Button
+            variant={viewTier === 'subcategory' ? 'default' : 'ghost'}
+            size="sm"
+            onClick={() => setViewTier('subcategory')}
+          >
+            Detailed
+          </Button>
+        </div>
       </div>
 
       {/* Summary Cards */}
@@ -125,13 +196,13 @@ export default async function ExpensesPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              Top Category
+              Top {viewTier === 'parent' ? 'Category' : 'Subcategory'}
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold">{topCategories[0]?.name || '-'}</div>
             <p className="text-xs text-muted-foreground">
-              {topCategories[0] ? formatCurrency(topCategories[0].value) : '-'}
+              {topCategories[0] ? formatCurrency(topCategories[0].total) : '-'}
             </p>
           </CardContent>
         </Card>
@@ -143,11 +214,15 @@ export default async function ExpensesPage() {
         <Card>
           <CardHeader>
             <CardTitle>Expense Breakdown</CardTitle>
-            <CardDescription>Where your money went this month</CardDescription>
+            <CardDescription>
+              {viewTier === 'parent'
+                ? 'Grouped by parent category'
+                : 'Individual subcategories'}
+            </CardDescription>
           </CardHeader>
           <CardContent>
-            {expensesByCategory.length > 0 ? (
-              <ExpenseDonutChart data={expensesByCategory} />
+            {chartData.length > 0 ? (
+              <ExpenseDonutChart data={chartData} />
             ) : (
               <div className="flex items-center justify-center h-[280px] text-muted-foreground text-sm">
                 No expenses recorded this month
@@ -159,26 +234,26 @@ export default async function ExpensesPage() {
         {/* Top Categories */}
         <Card>
           <CardHeader>
-            <CardTitle>Top Categories</CardTitle>
+            <CardTitle>Top {viewTier === 'parent' ? 'Categories' : 'Subcategories'}</CardTitle>
             <CardDescription>Your biggest spending areas</CardDescription>
           </CardHeader>
           <CardContent>
             {topCategories.length > 0 ? (
               <div className="space-y-4">
-                {topCategories.map((category) => (
-                  <div key={category.name} className="space-y-2">
+                {topCategories.map((category, index) => (
+                  <div key={category.id} className="space-y-2">
                     <div className="flex items-center justify-between">
                       <span className="font-medium">{category.name}</span>
                       <span className="text-muted-foreground">
-                        {formatCurrency(category.value)}
+                        {formatCurrency(category.total)}
                       </span>
                     </div>
                     <div className="h-2 rounded-full bg-muted overflow-hidden">
                       <div
                         className="h-full rounded-full"
                         style={{
-                          width: `${(category.value / totalExpenses) * 100}%`,
-                          backgroundColor: category.color,
+                          width: `${(category.total / totalExpenses) * 100}%`,
+                          backgroundColor: category.color || CATEGORY_COLORS[index % CATEGORY_COLORS.length],
                         }}
                       />
                     </div>
@@ -211,25 +286,36 @@ export default async function ExpensesPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {((transactions || []) as TransactionWithCategory[]).length > 0 ? (
-                ((transactions || []) as TransactionWithCategory[]).slice(0, 20).map((t) => (
-                  <TableRow key={t.id}>
-                    <TableCell className="whitespace-nowrap">
-                      {formatDate(t.transaction_date)}
-                    </TableCell>
-                    <TableCell className="max-w-[300px] truncate">
-                      {t.description}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="secondary">
-                        {t.category?.[0]?.name || 'Uncategorized'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right text-red-500">
-                      {formatCurrency(Math.abs(Number(t.amount)))}
-                    </TableCell>
-                  </TableRow>
-                ))
+              {transactions.length > 0 ? (
+                transactions.slice(0, 20).map((t) => {
+                  const cat = t.category
+                  const parentCat = cat?.parent_id
+                    ? categories.find((c) => c.id === cat.parent_id)
+                    : null
+                  const displayCategory =
+                    viewTier === 'parent' && parentCat
+                      ? parentCat.name
+                      : cat?.name || 'Uncategorized'
+
+                  return (
+                    <TableRow key={t.id}>
+                      <TableCell className="whitespace-nowrap">
+                        {formatDate(t.transaction_date)}
+                      </TableCell>
+                      <TableCell className="max-w-[300px] truncate">
+                        {t.description}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="secondary">
+                          {displayCategory}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right text-red-500">
+                        {formatCurrency(Math.abs(Number(t.amount)))}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })
               ) : (
                 <TableRow>
                   <TableCell colSpan={4} className="text-center text-muted-foreground py-8">

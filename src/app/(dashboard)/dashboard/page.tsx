@@ -12,7 +12,7 @@ import type { NetWorthSnapshot, Transaction, Category } from '@/types/database'
 import { startOfMonth, endOfMonth } from 'date-fns'
 
 type TransactionWithCategory = Transaction & {
-  category: Pick<Category, 'name' | 'color'>[] | null
+  category: Pick<Category, 'id' | 'name' | 'color' | 'parent_id'> | null
 }
 
 export default async function DashboardPage() {
@@ -73,7 +73,7 @@ export default async function DashboardPage() {
     .from('transactions')
     .select(`
       *,
-      category:categories(name, color)
+      category:categories!category_id(id, name, color, parent_id)
     `)
     .eq('transaction_type', 'expense')
     .gte('transaction_date', monthStart.toISOString().split('T')[0])
@@ -84,21 +84,34 @@ export default async function DashboardPage() {
     .from('transactions')
     .select(`
       *,
-      category:categories(name, color)
+      category:categories!category_id(id, name, color, parent_id)
     `)
     .eq('transaction_type', 'income')
     .gte('transaction_date', monthStart.toISOString().split('T')[0])
     .lte('transaction_date', monthEnd.toISOString().split('T')[0])
 
+  // Fetch all categories to look up parents
+  const { data: allCategories } = await supabase
+    .from('categories')
+    .select('id, name, color, parent_id')
+
   const expenseList = (expenseTransactions || []) as TransactionWithCategory[]
   const incomeList = (incomeTransactions || []) as TransactionWithCategory[]
+  const categoriesList = allCategories || []
 
-  // Aggregate expenses by category
+  // Aggregate expenses by PARENT category (Tier 1 - Summary view for Dashboard)
   const expenseCategoryMap = new Map<string, { name: string; value: number; color: string }>()
   expenseList.forEach((t) => {
-    const cat = t.category?.[0]
-    const categoryName = cat?.name || 'Uncategorized'
-    const color = cat?.color || 'hsl(var(--chart-1))'
+    const cat = t.category
+    // Look up parent from categories list
+    const parentCat = cat?.parent_id
+      ? categoriesList.find((c) => c.id === cat.parent_id)
+      : null
+
+    // Use parent category if available, otherwise use the category itself
+    const categoryName = parentCat?.name || cat?.name || 'Uncategorized'
+    const color = parentCat?.color || cat?.color || 'hsl(var(--chart-1))'
+
     const existing = expenseCategoryMap.get(categoryName)
     if (existing) {
       existing.value += Math.abs(Number(t.amount))
@@ -108,10 +121,18 @@ export default async function DashboardPage() {
   })
   const expenseData = Array.from(expenseCategoryMap.values()).sort((a, b) => b.value - a.value)
 
-  // Aggregate income by category
+  // Aggregate income by PARENT category (Tier 1 - Summary view for Dashboard)
   const incomeCategoryMap = new Map<string, number>()
   incomeList.forEach((t) => {
-    const categoryName = t.category?.[0]?.name || 'Other Income'
+    const cat = t.category
+    // Look up parent from categories list
+    const parentCat = cat?.parent_id
+      ? categoriesList.find((c) => c.id === cat.parent_id)
+      : null
+
+    // Use parent category if available, otherwise use the category itself
+    const categoryName = parentCat?.name || cat?.name || 'Other Income'
+
     const existing = incomeCategoryMap.get(categoryName) || 0
     incomeCategoryMap.set(categoryName, existing + Number(t.amount))
   })

@@ -1,4 +1,5 @@
 import type { Category, TransactionType } from '@/types/database'
+import { normalizeQBAccountName } from './string-similarity'
 
 /**
  * Determines the transaction type (income/expense) based on QuickBooks transaction type.
@@ -54,6 +55,63 @@ export function getTransactionTypeFromQB(qbTransactionType: string | null): Tran
 }
 
 /**
+ * Finds an exact match for a QB account in categories (case-insensitive, trimmed)
+ */
+function findExactMatch(
+  qbAccount: string,
+  categories: Category[],
+  transactionType: TransactionType
+): string | null {
+  const normalizedAccount = qbAccount.toLowerCase().trim()
+
+  for (const category of categories) {
+    if (category.type !== transactionType && transactionType !== 'transfer') {
+      continue
+    }
+
+    if (category.qb_category_names && Array.isArray(category.qb_category_names)) {
+      const hasMatch = category.qb_category_names.some(
+        (name) => name.toLowerCase().trim() === normalizedAccount
+      )
+      if (hasMatch) {
+        return category.id
+      }
+    }
+  }
+
+  return null
+}
+
+/**
+ * Finds a normalized match for a QB account in categories
+ * Uses normalizeQBAccountName to handle variations like typos, spacing, abbreviations
+ */
+function findNormalizedMatch(
+  qbAccount: string,
+  categories: Category[],
+  transactionType: TransactionType
+): string | null {
+  const normalizedAccount = normalizeQBAccountName(qbAccount)
+
+  for (const category of categories) {
+    if (category.type !== transactionType && transactionType !== 'transfer') {
+      continue
+    }
+
+    if (category.qb_category_names && Array.isArray(category.qb_category_names)) {
+      const hasMatch = category.qb_category_names.some(
+        (name) => normalizeQBAccountName(name) === normalizedAccount
+      )
+      if (hasMatch) {
+        return category.id
+      }
+    }
+  }
+
+  return null
+}
+
+/**
  * Finds a matching category for a transaction based on its QB "Account full name"
  * and transaction type.
  *
@@ -71,29 +129,15 @@ export function findCategoryForTransaction(
     return null
   }
 
-  const normalizedAccount = qbAccount.toLowerCase().trim()
   const transactionType = getTransactionTypeFromQB(qbTransactionType)
 
-  // Find a category that:
-  // 1. Has the qbSplit name in its qb_category_names array (case-insensitive)
-  // 2. Matches the transaction type (income categories for deposits, expense for checks, etc.)
-  for (const category of categories) {
-    // Check if this category's type matches the transaction type
-    // Allow 'transfer' type to match either income or expense categories
-    if (category.type !== transactionType && transactionType !== 'transfer') {
-      continue
-    }
+  // Step 1: Try exact match (fast path)
+  const exactMatch = findExactMatch(qbAccount, categories, transactionType)
+  if (exactMatch) return exactMatch
 
-    // Check if qb_category_names contains this QB account name
-    if (category.qb_category_names && Array.isArray(category.qb_category_names)) {
-      const hasMatch = category.qb_category_names.some(
-        (name) => name.toLowerCase().trim() === normalizedAccount
-      )
-      if (hasMatch) {
-        return category.id
-      }
-    }
-  }
+  // Step 2: Try normalized match (handles typos, spacing, abbreviations)
+  const normalizedMatch = findNormalizedMatch(qbAccount, categories, transactionType)
+  if (normalizedMatch) return normalizedMatch
 
   return null
 }

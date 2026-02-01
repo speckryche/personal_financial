@@ -32,11 +32,27 @@ import {
 } from '@/components/ui/table'
 import { useToast } from '@/components/ui/use-toast'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Plus, Trash2, Loader2 } from 'lucide-react'
+import { Plus, Trash2, Loader2, ChevronRight, AlertTriangle, Pencil } from 'lucide-react'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { CategoryMapping } from '@/components/settings/category-mapping'
 import { TransactionTypeMapping } from '@/components/settings/transaction-type-mapping'
+import {
+  buildCategoryTree,
+  getParentCategories,
+  getChildrenCount,
+  type CategoryWithChildren,
+} from '@/lib/category-utils'
 import type { Account, AccountType, NetWorthBucket, Category, HomeEntry } from '@/types/database'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 
 export default function SettingsPage() {
   const supabase = createClient()
@@ -57,7 +73,26 @@ export default function SettingsPage() {
   const [newCategory, setNewCategory] = useState({
     name: '',
     type: 'expense' as 'income' | 'expense' | 'transfer',
+    isSubcategory: false,
+    parent_id: null as string | null,
   })
+
+  // Delete confirmation state
+  const [deleteConfirm, setDeleteConfirm] = useState<{
+    id: string
+    name: string
+    childrenCount: number
+  } | null>(null)
+
+  // Edit category state
+  const [editCategory, setEditCategory] = useState<{
+    id: string
+    name: string
+    type: 'income' | 'expense' | 'transfer'
+    parent_id: string | null
+    hasChildren: boolean
+  } | null>(null)
+  const [isEditingCategory, setIsEditingCategory] = useState(false)
 
   const [newHomeEntry, setNewHomeEntry] = useState({
     property_name: 'Primary Residence',
@@ -70,6 +105,7 @@ export default function SettingsPage() {
   const [isAddingCategory, setIsAddingCategory] = useState(false)
   const [isAddingHome, setIsAddingHome] = useState(false)
   const [dialogOpen, setDialogOpen] = useState<'account' | 'category' | 'home' | null>(null)
+  const [activeTab, setActiveTab] = useState('accounts')
 
   useEffect(() => {
     loadData()
@@ -136,6 +172,43 @@ export default function SettingsPage() {
 
   const handleAddCategory = async () => {
     if (!newCategory.name) return
+
+    // Validation: subcategory must have a parent
+    if (newCategory.isSubcategory && !newCategory.parent_id) {
+      toast({
+        title: 'Error',
+        description: 'Please select a parent category for the subcategory',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    // Validation: subcategory type must match parent type
+    if (newCategory.isSubcategory && newCategory.parent_id) {
+      const parent = categories.find((c) => c.id === newCategory.parent_id)
+      if (parent && parent.type !== newCategory.type) {
+        toast({
+          title: 'Error',
+          description: `Subcategory type must match parent type (${parent.type})`,
+          variant: 'destructive',
+        })
+        return
+      }
+    }
+
+    // Validation: cannot create sub-subcategory (parent must have parent_id === null)
+    if (newCategory.isSubcategory && newCategory.parent_id) {
+      const parent = categories.find((c) => c.id === newCategory.parent_id)
+      if (parent && parent.parent_id !== null) {
+        toast({
+          title: 'Error',
+          description: 'Cannot create a subcategory of a subcategory (2 tiers maximum)',
+          variant: 'destructive',
+        })
+        return
+      }
+    }
+
     setIsAddingCategory(true)
 
     const { data: { user } } = await supabase.auth.getUser()
@@ -145,17 +218,31 @@ export default function SettingsPage() {
       user_id: user.id,
       name: newCategory.name,
       type: newCategory.type,
+      parent_id: newCategory.isSubcategory ? newCategory.parent_id : null,
     })
 
     if (error) {
       toast({ title: 'Error', description: error.message, variant: 'destructive' })
     } else {
       toast({ title: 'Category added successfully' })
-      setNewCategory({ name: '', type: 'expense' })
+      setNewCategory({ name: '', type: 'expense', isSubcategory: false, parent_id: null })
       setDialogOpen(null)
       loadData()
     }
     setIsAddingCategory(false)
+  }
+
+  const handleDeleteCategoryClick = (category: Category) => {
+    const childrenCount = getChildrenCount(category.id, categories)
+    if (childrenCount > 0) {
+      setDeleteConfirm({
+        id: category.id,
+        name: category.name,
+        childrenCount,
+      })
+    } else {
+      handleDeleteCategory(category.id)
+    }
   }
 
   const handleDeleteCategory = async (id: string) => {
@@ -166,6 +253,63 @@ export default function SettingsPage() {
       toast({ title: 'Category deleted' })
       loadData()
     }
+    setDeleteConfirm(null)
+  }
+
+  const handleEditCategoryClick = (category: Category) => {
+    const hasChildren = categories.some((c) => c.parent_id === category.id)
+    setEditCategory({
+      id: category.id,
+      name: category.name,
+      type: category.type,
+      parent_id: category.parent_id,
+      hasChildren,
+    })
+  }
+
+  const handleUpdateCategory = async () => {
+    if (!editCategory || !editCategory.name) return
+
+    // Validation: if assigning a parent, type must match
+    if (editCategory.parent_id) {
+      const parent = categories.find((c) => c.id === editCategory.parent_id)
+      if (parent && parent.type !== editCategory.type) {
+        toast({
+          title: 'Error',
+          description: `Type must match parent type (${parent.type})`,
+          variant: 'destructive',
+        })
+        return
+      }
+      // Cannot assign to a subcategory (only 2 tiers)
+      if (parent && parent.parent_id !== null) {
+        toast({
+          title: 'Error',
+          description: 'Cannot assign to a subcategory (2 tiers maximum)',
+          variant: 'destructive',
+        })
+        return
+      }
+    }
+
+    setIsEditingCategory(true)
+
+    const { error } = await supabase
+      .from('categories')
+      .update({
+        name: editCategory.name,
+        parent_id: editCategory.parent_id,
+      })
+      .eq('id', editCategory.id)
+
+    if (error) {
+      toast({ title: 'Error', description: error.message, variant: 'destructive' })
+    } else {
+      toast({ title: 'Category updated successfully' })
+      setEditCategory(null)
+      loadData()
+    }
+    setIsEditingCategory(false)
   }
 
   const handleAddHomeEntry = async () => {
@@ -227,7 +371,7 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      <Tabs defaultValue="accounts">
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
           <TabsTrigger value="accounts">Accounts</TabsTrigger>
           <TabsTrigger value="categories">Categories</TabsTrigger>
@@ -406,10 +550,66 @@ export default function SettingsPage() {
                   </DialogHeader>
                   <div className="space-y-4">
                     <div className="space-y-2">
+                      <Label>Category Level</Label>
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          variant={!newCategory.isSubcategory ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => setNewCategory({ ...newCategory, isSubcategory: false, parent_id: null })}
+                        >
+                          Parent
+                        </Button>
+                        <Button
+                          type="button"
+                          variant={newCategory.isSubcategory ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => setNewCategory({ ...newCategory, isSubcategory: true })}
+                          disabled={getParentCategories(categories).length === 0}
+                        >
+                          Subcategory
+                        </Button>
+                      </div>
+                      {newCategory.isSubcategory && getParentCategories(categories).length === 0 && (
+                        <p className="text-xs text-muted-foreground">
+                          Create a parent category first
+                        </p>
+                      )}
+                    </div>
+                    {newCategory.isSubcategory && (
+                      <div className="space-y-2">
+                        <Label>Parent Category</Label>
+                        <Select
+                          value={newCategory.parent_id || ''}
+                          onValueChange={(v) => {
+                            const parent = categories.find((c) => c.id === v)
+                            setNewCategory({
+                              ...newCategory,
+                              parent_id: v,
+                              type: parent?.type || newCategory.type,
+                            })
+                          }}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select parent..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {getParentCategories(categories)
+                              .filter((c) => !newCategory.type || c.type === newCategory.type || !newCategory.parent_id)
+                              .map((parent) => (
+                                <SelectItem key={parent.id} value={parent.id}>
+                                  {parent.name} ({parent.type})
+                                </SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+                    <div className="space-y-2">
                       <Label htmlFor="cat-name">Category Name</Label>
                       <Input
                         id="cat-name"
-                        placeholder="e.g., Groceries"
+                        placeholder={newCategory.isSubcategory ? 'e.g., Utilities' : 'e.g., House Expenses'}
                         value={newCategory.name}
                         onChange={(e) => setNewCategory({ ...newCategory, name: e.target.value })}
                       />
@@ -421,6 +621,7 @@ export default function SettingsPage() {
                         onValueChange={(v: 'income' | 'expense' | 'transfer') =>
                           setNewCategory({ ...newCategory, type: v })
                         }
+                        disabled={newCategory.isSubcategory && !!newCategory.parent_id}
                       >
                         <SelectTrigger>
                           <SelectValue />
@@ -431,12 +632,17 @@ export default function SettingsPage() {
                           <SelectItem value="transfer">Transfer</SelectItem>
                         </SelectContent>
                       </Select>
+                      {newCategory.isSubcategory && newCategory.parent_id && (
+                        <p className="text-xs text-muted-foreground">
+                          Type is inherited from parent category
+                        </p>
+                      )}
                     </div>
                   </div>
                   <DialogFooter>
-                    <Button onClick={handleAddCategory} disabled={isAddingCategory || !newCategory.name}>
+                    <Button onClick={handleAddCategory} disabled={isAddingCategory || !newCategory.name || (newCategory.isSubcategory && !newCategory.parent_id)}>
                       {isAddingCategory && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                      Add Category
+                      Add {newCategory.isSubcategory ? 'Subcategory' : 'Category'}
                     </Button>
                   </DialogFooter>
                 </DialogContent>
@@ -453,30 +659,178 @@ export default function SettingsPage() {
                 </TableHeader>
                 <TableBody>
                   {categories.length > 0 ? (
-                    categories.map((category) => (
-                      <TableRow key={category.id}>
-                        <TableCell className="font-medium">{category.name}</TableCell>
-                        <TableCell className="capitalize">{category.type}</TableCell>
-                        <TableCell>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleDeleteCategory(category.id)}
-                          >
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
+                    buildCategoryTree(categories).map((parent: CategoryWithChildren) => (
+                      <>
+                        <TableRow key={parent.id} className="bg-muted/30">
+                          <TableCell className="font-medium">
+                            {parent.name}
+                            {parent.children.length > 0 && (
+                              <span className="ml-2 text-xs text-muted-foreground">
+                                ({parent.children.length} subcategories)
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell className="capitalize">{parent.type}</TableCell>
+                          <TableCell>
+                            <div className="flex gap-1">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => handleEditCategoryClick(parent)}
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => handleDeleteCategoryClick(parent)}
+                              >
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                        {parent.children.map((child) => (
+                          <TableRow key={child.id}>
+                            <TableCell className="font-medium pl-8">
+                              <span className="flex items-center gap-1 text-muted-foreground">
+                                <ChevronRight className="h-3 w-3" />
+                                {child.name}
+                              </span>
+                            </TableCell>
+                            <TableCell className="capitalize">{child.type}</TableCell>
+                            <TableCell>
+                              <div className="flex gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleEditCategoryClick(child)}
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleDeleteCategoryClick(child)}
+                                >
+                                  <Trash2 className="h-4 w-4 text-destructive" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </>
                     ))
                   ) : (
                     <TableRow>
                       <TableCell colSpan={3} className="text-center text-muted-foreground">
-                        No categories yet. Default categories will be created when you sign up.
+                        No categories yet. Create parent categories first, then add subcategories.
                       </TableCell>
                     </TableRow>
                   )}
                 </TableBody>
               </Table>
+
+              {/* Delete confirmation dialog for parent categories with children */}
+              <AlertDialog open={!!deleteConfirm} onOpenChange={(open) => !open && setDeleteConfirm(null)}>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle className="flex items-center gap-2">
+                      <AlertTriangle className="h-5 w-5 text-amber-500" />
+                      Delete Parent Category?
+                    </AlertDialogTitle>
+                    <AlertDialogDescription>
+                      <strong>{deleteConfirm?.name}</strong> has {deleteConfirm?.childrenCount} subcategories.
+                      Deleting this parent will orphan the subcategories (they will become top-level categories).
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={() => deleteConfirm && handleDeleteCategory(deleteConfirm.id)}
+                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    >
+                      Delete Anyway
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+
+              {/* Edit category dialog */}
+              <Dialog open={!!editCategory} onOpenChange={(open) => !open && setEditCategory(null)}>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Edit Category</DialogTitle>
+                    <DialogDescription>
+                      Update category name or assign to a parent category
+                    </DialogDescription>
+                  </DialogHeader>
+                  {editCategory && (
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-cat-name">Category Name</Label>
+                        <Input
+                          id="edit-cat-name"
+                          value={editCategory.name}
+                          onChange={(e) => setEditCategory({ ...editCategory, name: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Type</Label>
+                        <div className="text-sm text-muted-foreground capitalize bg-muted px-3 py-2 rounded-md">
+                          {editCategory.type}
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Type cannot be changed (would break transaction mappings)
+                        </p>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Parent Category</Label>
+                        {editCategory.hasChildren ? (
+                          <div className="text-sm text-muted-foreground bg-muted px-3 py-2 rounded-md">
+                            This is a parent category (has subcategories)
+                          </div>
+                        ) : (
+                          <Select
+                            value={editCategory.parent_id || 'none'}
+                            onValueChange={(v) =>
+                              setEditCategory({ ...editCategory, parent_id: v === 'none' ? null : v })
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">-- No Parent (Top Level) --</SelectItem>
+                              {getParentCategories(categories)
+                                .filter((c) => c.type === editCategory.type && c.id !== editCategory.id)
+                                .map((parent) => (
+                                  <SelectItem key={parent.id} value={parent.id}>
+                                    {parent.name}
+                                  </SelectItem>
+                                ))}
+                            </SelectContent>
+                          </Select>
+                        )}
+                        {!editCategory.hasChildren && editCategory.parent_id === null && (
+                          <p className="text-xs text-muted-foreground">
+                            Assign a parent to make this a subcategory
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setEditCategory(null)}>
+                      Cancel
+                    </Button>
+                    <Button onClick={handleUpdateCategory} disabled={isEditingCategory || !editCategory?.name}>
+                      {isEditingCategory && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      Save Changes
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
             </CardContent>
           </Card>
         </TabsContent>

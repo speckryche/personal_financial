@@ -30,6 +30,7 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Plus } from 'lucide-react'
 import { formatCurrencyDetailed, formatDate } from '@/lib/utils'
+import { getSubcategoriesForMapping } from '@/lib/category-utils'
 import type { ParsedTransaction } from '@/lib/parsers/quickbooks/transaction-parser'
 import type { ParsedInvestment } from '@/lib/parsers/quickbooks/investment-parser'
 
@@ -37,6 +38,7 @@ interface CategoryInfo {
   id: string
   name: string
   type: 'income' | 'expense' | 'transfer'
+  parent_id?: string | null
 }
 
 // Separate component for category mapping to handle dialog state
@@ -231,24 +233,67 @@ function CategoryMappingSection({
                     <SelectItem value="unmapped">
                       <span className="text-muted-foreground">-- No Category --</span>
                     </SelectItem>
-                    {categories.filter(c => c.type === 'expense').length > 0 && (
-                      <>
-                        <SelectItem value="__expense_header__" disabled>
-                          <span className="text-xs font-semibold">EXPENSE</span>
+                    {/* Expense subcategories grouped by parent */}
+                    {getSubcategoriesForMapping(categories as any, 'expense').map((group) => (
+                      <div key={group.parent.id}>
+                        <SelectItem value={`__parent_${group.parent.id}__`} disabled>
+                          <span className="text-xs font-semibold">— {group.parent.name} —</span>
                         </SelectItem>
-                        {categories.filter(c => c.type === 'expense').map(cat => (
+                        {group.subcategories.map((sub) => (
+                          <SelectItem key={sub.id} value={sub.id}>
+                            {sub.name}
+                          </SelectItem>
+                        ))}
+                      </div>
+                    ))}
+                    {/* Orphan expense categories for backward compatibility */}
+                    {categories.filter(c => c.type === 'expense' && !c.parent_id &&
+                      !categories.some(child => child.parent_id === c.id)
+                    ).length > 0 && (
+                      <>
+                        <SelectItem value="__orphan_expense_header__" disabled>
+                          <span className="text-xs font-semibold">— Other Expense —</span>
+                        </SelectItem>
+                        {categories.filter(c => c.type === 'expense' && !c.parent_id &&
+                          !categories.some(child => child.parent_id === c.id)
+                        ).map(cat => (
                           <SelectItem key={cat.id} value={cat.id}>
                             {cat.name}
                           </SelectItem>
                         ))}
                       </>
                     )}
-                    {categories.filter(c => c.type === 'income').length > 0 && (
+                    {/* Income subcategories grouped by parent */}
+                    {getSubcategoriesForMapping(categories as any, 'income').length > 0 && (
                       <>
-                        <SelectItem value="__income_header__" disabled>
-                          <span className="text-xs font-semibold">INCOME</span>
+                        <SelectItem value="__income_divider__" disabled>
+                          <span className="text-xs font-semibold">━━━ INCOME ━━━</span>
                         </SelectItem>
-                        {categories.filter(c => c.type === 'income').map(cat => (
+                        {getSubcategoriesForMapping(categories as any, 'income').map((group) => (
+                          <div key={group.parent.id}>
+                            <SelectItem value={`__parent_${group.parent.id}__`} disabled>
+                              <span className="text-xs font-semibold">— {group.parent.name} —</span>
+                            </SelectItem>
+                            {group.subcategories.map((sub) => (
+                              <SelectItem key={sub.id} value={sub.id}>
+                                {sub.name}
+                              </SelectItem>
+                            ))}
+                          </div>
+                        ))}
+                      </>
+                    )}
+                    {/* Orphan income categories for backward compatibility */}
+                    {categories.filter(c => c.type === 'income' && !c.parent_id &&
+                      !categories.some(child => child.parent_id === c.id)
+                    ).length > 0 && (
+                      <>
+                        <SelectItem value="__orphan_income_header__" disabled>
+                          <span className="text-xs font-semibold">— Other Income —</span>
+                        </SelectItem>
+                        {categories.filter(c => c.type === 'income' && !c.parent_id &&
+                          !categories.some(child => child.parent_id === c.id)
+                        ).map(cat => (
                           <SelectItem key={cat.id} value={cat.id}>
                             {cat.name}
                           </SelectItem>

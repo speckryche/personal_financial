@@ -1,9 +1,9 @@
 import { createClient } from '@/lib/supabase/server'
 import { findCategoryForTransaction } from '@/lib/categorization'
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import type { Category } from '@/types/database'
 
-export async function POST() {
+export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient()
     const {
@@ -13,6 +13,10 @@ export async function POST() {
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+
+    // Check if we should re-categorize ALL transactions (including already categorized)
+    const { searchParams } = new URL(request.url)
+    const recategorizeAll = searchParams.get('all') === 'true'
 
     // Fetch user's categories with their qb_category_names
     const { data: categoriesData, error: categoriesError } = await supabase
@@ -26,13 +30,19 @@ export async function POST() {
 
     const categories: Category[] = categoriesData || []
 
-    // Fetch all uncategorized transactions that have a qb_split value
-    const { data: transactions, error: transactionsError } = await supabase
+    // Fetch transactions - either uncategorized only, or ALL with qb_account
+    let query = supabase
       .from('transactions')
-      .select('id, qb_split, qb_transaction_type')
+      .select('id, qb_account, qb_transaction_type')
       .eq('user_id', user.id)
-      .is('category_id', null)
-      .not('qb_split', 'is', null)
+      .not('qb_account', 'is', null)
+
+    if (!recategorizeAll) {
+      // Only uncategorized transactions
+      query = query.is('category_id', null)
+    }
+
+    const { data: transactions, error: transactionsError } = await query
 
     if (transactionsError) {
       return NextResponse.json({ error: 'Failed to fetch transactions' }, { status: 500 })
@@ -42,7 +52,9 @@ export async function POST() {
       return NextResponse.json({
         success: true,
         categorized: 0,
-        message: 'No uncategorized transactions with QB account names found',
+        message: recategorizeAll
+          ? 'No transactions with QB account names found'
+          : 'No uncategorized transactions with QB account names found',
       })
     }
 
@@ -51,7 +63,7 @@ export async function POST() {
 
     for (const t of transactions) {
       const categoryId = findCategoryForTransaction(
-        t.qb_split,
+        t.qb_account,
         t.qb_transaction_type,
         categories
       )

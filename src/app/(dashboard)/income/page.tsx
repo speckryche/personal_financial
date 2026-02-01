@@ -1,4 +1,7 @@
-import { createClient } from '@/lib/supabase/server'
+'use client'
+
+import { useState, useEffect } from 'react'
+import { createClient } from '@/lib/supabase/client'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { IncomeBarChart } from '@/components/charts/income-bar-chart'
 import {
@@ -10,16 +13,30 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { startOfMonth, endOfMonth, format, subMonths } from 'date-fns'
+import { Loader2 } from 'lucide-react'
+import {
+  aggregateByParentCategory,
+  aggregateBySubcategory,
+  type AggregatedCategory,
+} from '@/lib/category-utils'
 import type { Transaction, Category } from '@/types/database'
 
 type TransactionWithCategory = Transaction & {
-  category: Pick<Category, 'name' | 'color'>[] | null
+  category: Pick<Category, 'id' | 'name' | 'color' | 'parent_id'> | null
 }
 
-export default async function IncomePage() {
-  const supabase = await createClient()
+type ViewTier = 'parent' | 'subcategory'
+
+export default function IncomePage() {
+  const supabase = createClient()
+  const [transactions, setTransactions] = useState<TransactionWithCategory[]>([])
+  const [lastMonthTransactions, setLastMonthTransactions] = useState<{ amount: number }[]>([])
+  const [categories, setCategories] = useState<Category[]>([])
+  const [loading, setLoading] = useState(true)
+  const [viewTier, setViewTier] = useState<ViewTier>('parent')
 
   const now = new Date()
   const monthStart = startOfMonth(now)
@@ -27,57 +44,128 @@ export default async function IncomePage() {
   const lastMonthStart = startOfMonth(subMonths(now, 1))
   const lastMonthEnd = endOfMonth(subMonths(now, 1))
 
-  // Get income transactions for current month
-  const { data: transactions } = await supabase
-    .from('transactions')
-    .select(`
-      *,
-      category:categories(name, color)
-    `)
-    .eq('transaction_type', 'income')
-    .gte('transaction_date', monthStart.toISOString().split('T')[0])
-    .lte('transaction_date', monthEnd.toISOString().split('T')[0])
-    .order('transaction_date', { ascending: false })
-    .limit(100)
+  useEffect(() => {
+    loadData()
+  }, [])
 
-  // Get last month's income for comparison
-  const { data: lastMonthTransactions } = await supabase
-    .from('transactions')
-    .select('amount')
-    .eq('transaction_type', 'income')
-    .gte('transaction_date', lastMonthStart.toISOString().split('T')[0])
-    .lte('transaction_date', lastMonthEnd.toISOString().split('T')[0])
+  const loadData = async () => {
+    setLoading(true)
+
+    const [transactionsRes, lastMonthRes, categoriesRes] = await Promise.all([
+      supabase
+        .from('transactions')
+        .select(`
+          *,
+          category:categories!category_id(id, name, color, parent_id)
+        `)
+        .eq('transaction_type', 'income')
+        .gte('transaction_date', monthStart.toISOString().split('T')[0])
+        .lte('transaction_date', monthEnd.toISOString().split('T')[0])
+        .order('transaction_date', { ascending: false })
+        .limit(100),
+      supabase
+        .from('transactions')
+        .select('amount')
+        .eq('transaction_type', 'income')
+        .gte('transaction_date', lastMonthStart.toISOString().split('T')[0])
+        .lte('transaction_date', lastMonthEnd.toISOString().split('T')[0]),
+      supabase.from('categories').select('*'),
+    ])
+
+    if (transactionsRes.data) {
+      setTransactions(transactionsRes.data as TransactionWithCategory[])
+    }
+    if (lastMonthRes.data) {
+      setLastMonthTransactions(lastMonthRes.data as { amount: number }[])
+    }
+    if (categoriesRes.data) {
+      setCategories(categoriesRes.data)
+    }
+
+    setLoading(false)
+  }
 
   // Calculate totals
-  const transactionList = (transactions || []) as TransactionWithCategory[]
-  const lastMonthList = (lastMonthTransactions || []) as { amount: number }[]
-  const totalIncome = transactionList.reduce((sum, t) => sum + Number(t.amount), 0)
-  const lastMonthIncome = lastMonthList.reduce((sum, t) => sum + Number(t.amount), 0)
+  const totalIncome = transactions.reduce((sum, t) => sum + Number(t.amount), 0)
+  const lastMonthIncome = lastMonthTransactions.reduce((sum, t) => sum + Number(t.amount), 0)
   const monthOverMonthChange = lastMonthIncome > 0 ? ((totalIncome - lastMonthIncome) / lastMonthIncome) * 100 : 0
 
-  // Aggregate by category for chart
-  const categoryMap = new Map<string, number>()
+  // Aggregate by category based on view tier
+  const getAggregatedData = (): AggregatedCategory[] => {
+    const transactionsWithCategory = transactions.map((t) => {
+      const cat = t.category
+      // Look up parent from categories list if category has a parent_id
+      const parentCat = cat?.parent_id
+        ? categories.find((c) => c.id === cat.parent_id)
+        : null
 
-  transactionList.forEach((t) => {
-    const categoryName = t.category?.[0]?.name || 'Other Income'
-    const existing = categoryMap.get(categoryName) || 0
-    categoryMap.set(categoryName, existing + Number(t.amount))
-  })
+      return {
+        amount: Number(t.amount),
+        category: cat
+          ? {
+              id: cat.id,
+              name: cat.name,
+              color: cat.color,
+              parent_id: cat.parent_id,
+              parent: parentCat
+                ? { id: parentCat.id, name: parentCat.name, color: parentCat.color }
+                : null,
+            }
+          : null,
+      }
+    })
 
-  const incomeByCategory = Array.from(categoryMap.entries())
-    .map(([name, amount]) => ({ name, amount }))
-    .sort((a, b) => b.amount - a.amount)
+    if (viewTier === 'parent') {
+      return aggregateByParentCategory(transactionsWithCategory, categories)
+    } else {
+      return aggregateBySubcategory(transactionsWithCategory)
+    }
+  }
+
+  const incomeByCategory = getAggregatedData()
+
+  // Convert to chart format
+  const chartData = incomeByCategory.map((cat) => ({
+    name: cat.name,
+    amount: cat.total,
+  }))
 
   // Get unique income sources count
-  const uniqueSources = new Set(transactionList.map((t) => t.category?.[0]?.name || 'Other')).size
+  const uniqueSources = incomeByCategory.length
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin" />
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Income</h1>
-        <p className="text-muted-foreground">
-          Track your income sources for {format(now, 'MMMM yyyy')}
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Income</h1>
+          <p className="text-muted-foreground">
+            Track your income sources for {format(now, 'MMMM yyyy')}
+          </p>
+        </div>
+        <div className="flex gap-1 bg-muted p-1 rounded-lg">
+          <Button
+            variant={viewTier === 'parent' ? 'default' : 'ghost'}
+            size="sm"
+            onClick={() => setViewTier('parent')}
+          >
+            Summary
+          </Button>
+          <Button
+            variant={viewTier === 'subcategory' ? 'default' : 'ghost'}
+            size="sm"
+            onClick={() => setViewTier('subcategory')}
+          >
+            Detailed
+          </Button>
+        </div>
       </div>
 
       {/* Summary Cards */}
@@ -106,7 +194,7 @@ export default async function IncomePage() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              Income Sources
+              Income {viewTier === 'parent' ? 'Sources' : 'Categories'}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -118,13 +206,13 @@ export default async function IncomePage() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              Primary Source
+              Primary {viewTier === 'parent' ? 'Source' : 'Category'}
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold">{incomeByCategory[0]?.name || '-'}</div>
             <p className="text-xs text-muted-foreground">
-              {incomeByCategory[0] ? formatCurrency(incomeByCategory[0].amount) : '-'}
+              {incomeByCategory[0] ? formatCurrency(incomeByCategory[0].total) : '-'}
             </p>
           </CardContent>
         </Card>
@@ -135,12 +223,16 @@ export default async function IncomePage() {
         {/* Income by Source */}
         <Card>
           <CardHeader>
-            <CardTitle>Income by Source</CardTitle>
-            <CardDescription>Breakdown of your income streams</CardDescription>
+            <CardTitle>Income by {viewTier === 'parent' ? 'Source' : 'Category'}</CardTitle>
+            <CardDescription>
+              {viewTier === 'parent'
+                ? 'Grouped by parent category'
+                : 'Individual subcategories'}
+            </CardDescription>
           </CardHeader>
           <CardContent>
-            {incomeByCategory.length > 0 ? (
-              <IncomeBarChart data={incomeByCategory} />
+            {chartData.length > 0 ? (
+              <IncomeBarChart data={chartData} />
             ) : (
               <div className="flex items-center justify-center h-[300px] text-muted-foreground text-sm">
                 No income recorded this month
@@ -153,27 +245,27 @@ export default async function IncomePage() {
         <Card>
           <CardHeader>
             <CardTitle>Income Summary</CardTitle>
-            <CardDescription>Details by category</CardDescription>
+            <CardDescription>Details by {viewTier === 'parent' ? 'source' : 'category'}</CardDescription>
           </CardHeader>
           <CardContent>
             {incomeByCategory.length > 0 ? (
               <div className="space-y-4">
                 {incomeByCategory.map((source, i) => {
-                  const total = incomeByCategory.reduce((s, c) => s + c.amount, 0)
-                  const percentage = ((source.amount / total) * 100).toFixed(1)
+                  const total = incomeByCategory.reduce((s, c) => s + c.total, 0)
+                  const percentage = ((source.total / total) * 100).toFixed(1)
                   return (
-                    <div key={source.name} className="flex items-center justify-between">
+                    <div key={source.id} className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <div
                           className="h-3 w-3 rounded-full"
                           style={{
-                            backgroundColor: `hsl(${142 - i * 20}, 76%, ${36 + i * 5}%)`,
+                            backgroundColor: source.color || `hsl(${142 - i * 20}, 76%, ${36 + i * 5}%)`,
                           }}
                         />
                         <span className="font-medium">{source.name}</span>
                       </div>
                       <div className="text-right">
-                        <div className="font-medium">{formatCurrency(source.amount)}</div>
+                        <div className="font-medium">{formatCurrency(source.total)}</div>
                         <div className="text-xs text-muted-foreground">{percentage}%</div>
                       </div>
                     </div>
@@ -206,25 +298,36 @@ export default async function IncomePage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {transactionList.length > 0 ? (
-                transactionList.slice(0, 20).map((t) => (
-                  <TableRow key={t.id}>
-                    <TableCell className="whitespace-nowrap">
-                      {formatDate(t.transaction_date)}
-                    </TableCell>
-                    <TableCell className="max-w-[300px] truncate">
-                      {t.description}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="default">
-                        {t.category?.[0]?.name || 'Other Income'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right text-green-500 font-medium">
-                      +{formatCurrency(Number(t.amount))}
-                    </TableCell>
-                  </TableRow>
-                ))
+              {transactions.length > 0 ? (
+                transactions.slice(0, 20).map((t) => {
+                  const cat = t.category
+                  const parentCat = cat?.parent_id
+                    ? categories.find((c) => c.id === cat.parent_id)
+                    : null
+                  const displayCategory =
+                    viewTier === 'parent' && parentCat
+                      ? parentCat.name
+                      : cat?.name || 'Other Income'
+
+                  return (
+                    <TableRow key={t.id}>
+                      <TableCell className="whitespace-nowrap">
+                        {formatDate(t.transaction_date)}
+                      </TableCell>
+                      <TableCell className="max-w-[300px] truncate">
+                        {t.description}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="default">
+                          {displayCategory}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right text-green-500 font-medium">
+                        +{formatCurrency(Number(t.amount))}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })
               ) : (
                 <TableRow>
                   <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
