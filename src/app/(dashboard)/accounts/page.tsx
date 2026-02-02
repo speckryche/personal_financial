@@ -24,7 +24,7 @@ import {
 } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/components/ui/use-toast'
-import { Loader2, TrendingUp, TrendingDown, Wallet, CreditCard, Building2, PiggyBank, Plus } from 'lucide-react'
+import { Loader2, TrendingUp, TrendingDown, Wallet, CreditCard, Building2, PiggyBank, Plus, FileText } from 'lucide-react'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import {
   getAccountsWithBalances,
@@ -35,6 +35,7 @@ import {
   type AccountWithBalance,
 } from '@/lib/account-balance'
 import type { Transaction } from '@/types/database'
+import Link from 'next/link'
 
 interface AccountDetail {
   account: AccountWithBalance
@@ -380,10 +381,18 @@ export default function AccountsPage() {
                     {selectedAccount.account.transaction_count} linked transaction
                     {selectedAccount.account.transaction_count !== 1 ? 's' : ''}
                   </span>
-                  <Button variant="outline" size="sm" onClick={() => setBalanceDialogOpen(true)}>
-                    <Plus className="h-4 w-4 mr-2" />
-                    Record Balance
-                  </Button>
+                  <div className="flex gap-2">
+                    <Link href={`/accounts/${selectedAccount.account.id}/ledger`}>
+                      <Button variant="outline" size="sm">
+                        <FileText className="h-4 w-4 mr-2" />
+                        View Ledger
+                      </Button>
+                    </Link>
+                    <Button variant="outline" size="sm" onClick={() => setBalanceDialogOpen(true)}>
+                      <Plus className="h-4 w-4 mr-2" />
+                      Record Balance
+                    </Button>
+                  </div>
                 </div>
 
                 {/* Recent Transactions */}

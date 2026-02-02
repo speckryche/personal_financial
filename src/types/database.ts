@@ -82,7 +82,8 @@ export interface Transaction {
   qb_name: string | null
   qb_class: string | null
   qb_split: string | null
-  qb_account: string | null // "Account full name" column - used for category mapping
+  qb_account: string | null // "Account full name" column - the GL section header
+  split_account: string | null // The counter-entry account (e.g., checking account for expenses)
   is_reconciled: boolean
   created_at: string
   updated_at: string

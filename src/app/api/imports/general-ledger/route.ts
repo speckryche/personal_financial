@@ -170,16 +170,32 @@ export async function POST(request: Request) {
           categories
         )
 
-        // Auto-link to account based on qb_account name mapping
-        const linkedAccount = findAccountForQBName(t.qb_account, accounts)
+        // Try to link to account via qb_account first, then split_account
+        let linkedAccount = findAccountForQBName(t.qb_account, accounts)
+        let linkedViaSplit = false
+
+        // If qb_account didn't match a balance sheet account, check split_account
+        // This handles double-entry where checking account is the split
+        if (!linkedAccount && t.split_account) {
+          linkedAccount = findAccountForQBName(t.split_account, accounts)
+          linkedViaSplit = true
+        }
 
         // Amount from GL is already signed correctly (debit - credit)
         // For expenses, we want negative; for income, positive
         let amount = t.amount
-        if (transactionType === 'expense' && amount > 0) {
+
+        // If linked via split_account, negate the amount (opposite side of entry)
+        // GL amount represents debit/credit for qb_account; for split_account it's the opposite
+        if (linkedViaSplit) {
           amount = -amount
-        } else if (transactionType === 'income' && amount < 0) {
-          amount = -amount
+        } else {
+          // Original sign convention logic for qb_account entries
+          if (transactionType === 'expense' && amount > 0) {
+            amount = -amount
+          } else if (transactionType === 'income' && amount < 0) {
+            amount = -amount
+          }
         }
 
         return {
@@ -196,6 +212,7 @@ export async function POST(request: Request) {
           qb_num: t.qb_num,
           qb_name: t.qb_name,
           qb_account: t.qb_account,
+          split_account: t.split_account || null,
         }
       })
 

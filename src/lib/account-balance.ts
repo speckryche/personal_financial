@@ -206,7 +206,9 @@ export async function getAccountsWithBalances(
 }
 
 /**
- * Set or update the starting balance for an account
+ * Set or update the starting balance for an account.
+ * This deletes any existing manual balance records first to ensure
+ * only one starting balance exists per account.
  */
 export async function setStartingBalance(
   supabase: ReturnType<typeof createClient>,
@@ -214,21 +216,30 @@ export async function setStartingBalance(
   balance: number,
   balanceDate: string
 ): Promise<{ success: boolean; error?: string }> {
-  // Upsert the balance record
-  const { error } = await supabase
+  // Delete any existing manual balance records for this account
+  // This ensures changing the date doesn't create duplicate records
+  const { error: deleteError } = await supabase
     .from('account_balances')
-    .upsert(
-      {
-        account_id: accountId,
-        balance_date: balanceDate,
-        balance,
-        source: 'manual',
-      },
-      { onConflict: 'account_id,balance_date' }
-    )
+    .delete()
+    .eq('account_id', accountId)
+    .eq('source', 'manual')
 
-  if (error) {
-    return { success: false, error: error.message }
+  if (deleteError) {
+    return { success: false, error: deleteError.message }
+  }
+
+  // Insert the new balance record
+  const { error: insertError } = await supabase
+    .from('account_balances')
+    .insert({
+      account_id: accountId,
+      balance_date: balanceDate,
+      balance,
+      source: 'manual',
+    })
+
+  if (insertError) {
+    return { success: false, error: insertError.message }
   }
 
   return { success: true }

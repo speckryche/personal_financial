@@ -44,11 +44,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Fetch transactions - either unmapped only, or ALL with qb_account
+    // Include split_account for double-entry linking (e.g., checking account as counter-entry)
     let query = supabase
       .from('transactions')
-      .select('id, qb_account')
+      .select('id, qb_account, split_account, amount')
       .eq('user_id', user.id)
-      .not('qb_account', 'is', null)
 
     if (!remapAll) {
       // Only transactions without an account_id
@@ -61,7 +61,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to fetch transactions' }, { status: 500 })
     }
 
-    if (!transactions || transactions.length === 0) {
+    // Filter to only those with qb_account or split_account
+    const relevantTransactions = (transactions || []).filter(
+      (t) => t.qb_account || t.split_account
+    )
+
+    if (relevantTransactions.length === 0) {
       return NextResponse.json({
         success: true,
         updated: 0,
@@ -71,14 +76,37 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // Build updates
-    const updates: Array<{ id: string; account_id: string }> = []
+    // Build updates - check both qb_account and split_account
+    const updates: Array<{ id: string; account_id: string; amount?: number }> = []
+    let linkedViaQbAccount = 0
+    let linkedViaSplit = 0
 
-    for (const t of transactions) {
-      const account = findAccountForQBName(t.qb_account, accounts)
+    for (const t of relevantTransactions) {
+      // Try qb_account first
+      let account = findAccountForQBName(t.qb_account, accounts)
+      let linkedViaSplitAccount = false
+
+      // If qb_account didn't match, try split_account
+      if (!account && t.split_account) {
+        account = findAccountForQBName(t.split_account, accounts)
+        linkedViaSplitAccount = true
+      }
 
       if (account) {
-        updates.push({ id: t.id, account_id: account.id })
+        const update: { id: string; account_id: string; amount?: number } = {
+          id: t.id,
+          account_id: account.id,
+        }
+
+        // If linked via split_account, negate the amount (opposite side of double-entry)
+        if (linkedViaSplitAccount) {
+          update.amount = -Number(t.amount)
+          linkedViaSplit++
+        } else {
+          linkedViaQbAccount++
+        }
+
+        updates.push(update)
       }
     }
 
@@ -99,9 +127,16 @@ export async function POST(request: NextRequest) {
 
       // Use individual updates since Supabase doesn't support bulk update with different values
       for (const update of chunk) {
+        const updateData: { account_id: string; amount?: number } = {
+          account_id: update.account_id,
+        }
+        if (update.amount !== undefined) {
+          updateData.amount = update.amount
+        }
+
         const { error: updateError } = await supabase
           .from('transactions')
-          .update({ account_id: update.account_id })
+          .update(updateData)
           .eq('id', update.id)
 
         if (!updateError) {
@@ -113,7 +148,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       updated: updatedCount,
-      total: transactions.length,
+      total: relevantTransactions.length,
+      linkedViaQbAccount,
+      linkedViaSplit,
     })
   } catch (error) {
     console.error('Apply account mappings error:', error)
