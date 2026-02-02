@@ -124,7 +124,23 @@ export function classifyQBAccount(
     return categoryMapping.categoryType === 'income' ? 'income' : 'expense'
   }
 
-  // 4. Not found in any mapping
+  // 4. Auto-classify numbered accounts by QB convention
+  // This prevents re-prompting for income/expense accounts that aren't yet mapped to specific categories
+  const match = qbAccountName.match(/^(\d)/)
+  if (match) {
+    switch (match[1]) {
+      case '3': return 'ignored'    // Equity accounts (Retained Earnings, etc.)
+      case '4': return 'income'     // Income accounts
+      case '5':
+      case '6':
+      case '7':
+      case '8':
+      case '9': return 'expense'    // Expense accounts
+      // 1xxx and 2xxx (assets/liabilities) fall through to unmapped if not in accountMappings
+    }
+  }
+
+  // 5. Not found in any mapping
   return 'unmapped'
 }
 

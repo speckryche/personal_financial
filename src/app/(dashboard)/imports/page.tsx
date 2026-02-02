@@ -329,21 +329,26 @@ export default function ImportsPage() {
     if (!user) return null
 
     const mappings = await getAllQBMappings(supabase, user.id)
+    console.log('Loaded QB mappings:', {
+      ignored: mappings.ignoredAccounts.size,
+      accounts: mappings.accountMappings.size,
+      categories: mappings.categoryMappings.size,
+      accountNames: Array.from(mappings.accountMappings.keys()).slice(0, 5),
+    })
     setQbMappings(mappings)
     return mappings
   }, [supabase])
 
   // Classify discovered accounts against existing mappings
   const classifyAccounts = useCallback(async (accounts: DiscoveredAccount[]) => {
-    let mappings = qbMappings
-    if (!mappings) {
-      mappings = await loadQBMappings()
-    }
+    // Always fetch fresh mappings to ensure we have the latest data
+    const mappings = await loadQBMappings()
     if (!mappings) return
 
     const classified = classifyDiscoveredAccounts(accounts, mappings)
     setClassifiedAccounts(classified)
-  }, [qbMappings, loadQBMappings])
+    console.log('Classified accounts:', { unmapped: classified.unmapped.length, mapped: classified.mapped.length })
+  }, [loadQBMappings])
 
   useEffect(() => {
     loadAccounts()
