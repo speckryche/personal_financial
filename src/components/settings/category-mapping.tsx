@@ -137,8 +137,15 @@ export function CategoryMapping({ categories, onCategoriesUpdate }: CategoryMapp
       })
     })
 
+    // Filter out balance sheet accounts (those starting with numbers like "1505 Credit Card")
+    // These are asset/liability accounts from GL imports, not expense categories
+    const filteredAccounts = qbAccountsWithMappings.filter(a => {
+      // Skip accounts that start with a digit (balance sheet accounts from GL)
+      return !/^\d/.test(a.accountName)
+    })
+
     // Sort by uncategorized count (highest first), then by total count
-    qbAccountsWithMappings.sort((a, b) => {
+    filteredAccounts.sort((a, b) => {
       if (b.uncategorizedCount !== a.uncategorizedCount) {
         return b.uncategorizedCount - a.uncategorizedCount
       }
@@ -146,17 +153,17 @@ export function CategoryMapping({ categories, onCategoriesUpdate }: CategoryMapp
     })
 
     // For each mapped account, find similar unmapped accounts
-    const unmappedNames = qbAccountsWithMappings
+    const unmappedNames = filteredAccounts
       .filter((a) => !a.mappedCategoryId)
       .map((a) => a.accountName)
 
-    for (const account of qbAccountsWithMappings) {
+    for (const account of filteredAccounts) {
       if (account.mappedCategoryId) {
         account.similarUnmapped = findSimilarAccounts(account.accountName, unmappedNames, 0.65)
       }
     }
 
-    setQbAccounts(qbAccountsWithMappings)
+    setQbAccounts(filteredAccounts)
     setLoading(false)
   }
 

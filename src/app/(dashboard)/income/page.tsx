@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { startOfMonth, endOfMonth, format, subMonths } from 'date-fns'
 import { Loader2 } from 'lucide-react'
+import { DateRangePicker, type DateRange } from '@/components/ui/date-range-picker'
 import {
   aggregateByParentCategory,
   aggregateBySubcategory,
@@ -37,21 +38,28 @@ export default function IncomePage() {
   const [categories, setCategories] = useState<Category[]>([])
   const [loading, setLoading] = useState(true)
   const [viewTier, setViewTier] = useState<ViewTier>('parent')
-
-  const now = new Date()
-  const monthStart = startOfMonth(now)
-  const monthEnd = endOfMonth(now)
-  const lastMonthStart = startOfMonth(subMonths(now, 1))
-  const lastMonthEnd = endOfMonth(subMonths(now, 1))
+  // Default to previous month since user likely has historical data
+  const [dateRange, setDateRange] = useState<DateRange>(() => ({
+    start: startOfMonth(subMonths(new Date(), 1)),
+    end: endOfMonth(subMonths(new Date(), 1)),
+  }))
 
   useEffect(() => {
     loadData()
-  }, [])
+  }, [dateRange])
 
   const loadData = async () => {
     setLoading(true)
 
-    const [transactionsRes, lastMonthRes, categoriesRes] = await Promise.all([
+    const startDate = dateRange.start.toISOString().split('T')[0]
+    const endDate = dateRange.end.toISOString().split('T')[0]
+
+    // Calculate comparison period (same duration, immediately before)
+    const duration = dateRange.end.getTime() - dateRange.start.getTime()
+    const prevEnd = new Date(dateRange.start.getTime() - 1)
+    const prevStart = new Date(prevEnd.getTime() - duration)
+
+    const [transactionsRes, lastPeriodRes, categoriesRes] = await Promise.all([
       supabase
         .from('transactions')
         .select(`
@@ -59,24 +67,24 @@ export default function IncomePage() {
           category:categories!category_id(id, name, color, parent_id)
         `)
         .eq('transaction_type', 'income')
-        .gte('transaction_date', monthStart.toISOString().split('T')[0])
-        .lte('transaction_date', monthEnd.toISOString().split('T')[0])
+        .gte('transaction_date', startDate)
+        .lte('transaction_date', endDate)
         .order('transaction_date', { ascending: false })
-        .limit(100),
+        .limit(500),
       supabase
         .from('transactions')
         .select('amount')
         .eq('transaction_type', 'income')
-        .gte('transaction_date', lastMonthStart.toISOString().split('T')[0])
-        .lte('transaction_date', lastMonthEnd.toISOString().split('T')[0]),
+        .gte('transaction_date', prevStart.toISOString().split('T')[0])
+        .lte('transaction_date', prevEnd.toISOString().split('T')[0]),
       supabase.from('categories').select('*'),
     ])
 
     if (transactionsRes.data) {
       setTransactions(transactionsRes.data as TransactionWithCategory[])
     }
-    if (lastMonthRes.data) {
-      setLastMonthTransactions(lastMonthRes.data as { amount: number }[])
+    if (lastPeriodRes.data) {
+      setLastMonthTransactions(lastPeriodRes.data as { amount: number }[])
     }
     if (categoriesRes.data) {
       setCategories(categoriesRes.data)
@@ -133,6 +141,16 @@ export default function IncomePage() {
   // Get unique income sources count
   const uniqueSources = incomeByCategory.length
 
+  // Format date range for display
+  const getDateRangeLabel = () => {
+    const startStr = format(dateRange.start, 'MMM yyyy')
+    const endStr = format(dateRange.end, 'MMM yyyy')
+    if (startStr === endStr) {
+      return startStr
+    }
+    return `${startStr} - ${endStr}`
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -147,24 +165,27 @@ export default function IncomePage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Income</h1>
           <p className="text-muted-foreground">
-            Track your income sources for {format(now, 'MMMM yyyy')}
+            Track your income sources
           </p>
         </div>
-        <div className="flex gap-1 bg-muted p-1 rounded-lg">
-          <Button
-            variant={viewTier === 'parent' ? 'default' : 'ghost'}
-            size="sm"
-            onClick={() => setViewTier('parent')}
-          >
-            Summary
-          </Button>
-          <Button
-            variant={viewTier === 'subcategory' ? 'default' : 'ghost'}
-            size="sm"
-            onClick={() => setViewTier('subcategory')}
-          >
-            Detailed
-          </Button>
+        <div className="flex items-center gap-4">
+          <DateRangePicker value={dateRange} onChange={setDateRange} />
+          <div className="flex gap-1 bg-muted p-1 rounded-lg">
+            <Button
+              variant={viewTier === 'parent' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setViewTier('parent')}
+            >
+              Summary
+            </Button>
+            <Button
+              variant={viewTier === 'subcategory' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setViewTier('subcategory')}
+            >
+              Detailed
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -183,10 +204,10 @@ export default function IncomePage() {
             <p className="text-xs text-muted-foreground">
               {monthOverMonthChange !== 0 && (
                 <span className={monthOverMonthChange >= 0 ? 'text-green-500' : 'text-red-500'}>
-                  {monthOverMonthChange >= 0 ? '+' : ''}{monthOverMonthChange.toFixed(1)}% from last month
+                  {monthOverMonthChange >= 0 ? '+' : ''}{monthOverMonthChange.toFixed(1)}% from previous period
                 </span>
               )}
-              {monthOverMonthChange === 0 && 'This month'}
+              {monthOverMonthChange === 0 && getDateRangeLabel()}
             </p>
           </CardContent>
         </Card>
@@ -241,37 +262,61 @@ export default function IncomePage() {
           </CardContent>
         </Card>
 
-        {/* Income Summary */}
+        {/* All Categories Table */}
         <Card>
           <CardHeader>
-            <CardTitle>Income Summary</CardTitle>
-            <CardDescription>Details by {viewTier === 'parent' ? 'source' : 'category'}</CardDescription>
+            <CardTitle>
+              {viewTier === 'parent' ? 'All Income Sources' : 'All Subcategories'}
+            </CardTitle>
+            <CardDescription>
+              {viewTier === 'parent'
+                ? 'Complete breakdown by parent category'
+                : 'Complete breakdown by subcategory'}
+            </CardDescription>
           </CardHeader>
           <CardContent>
             {incomeByCategory.length > 0 ? (
-              <div className="space-y-4">
-                {incomeByCategory.map((source, i) => {
-                  const total = incomeByCategory.reduce((s, c) => s + c.total, 0)
-                  const percentage = ((source.total / total) * 100).toFixed(1)
-                  return (
-                    <div key={source.id} className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div
-                          className="h-3 w-3 rounded-full"
-                          style={{
-                            backgroundColor: source.color || `hsl(${142 - i * 20}, 76%, ${36 + i * 5}%)`,
-                          }}
-                        />
-                        <span className="font-medium">{source.name}</span>
-                      </div>
-                      <div className="text-right">
-                        <div className="font-medium">{formatCurrency(source.total)}</div>
-                        <div className="text-xs text-muted-foreground">{percentage}%</div>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Category</TableHead>
+                    <TableHead className="text-right">Transactions</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                    <TableHead className="text-right">% of Total</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {incomeByCategory.map((category, index) => {
+                    const percentage = totalIncome > 0
+                      ? ((category.total / totalIncome) * 100).toFixed(1)
+                      : '0.0'
+                    return (
+                      <TableRow key={category.id}>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <div
+                              className="h-3 w-3 rounded-full shrink-0"
+                              style={{
+                                backgroundColor: category.color || `hsl(${142 - index * 20}, 76%, ${36 + index * 5}%)`,
+                              }}
+                            />
+                            <span className="font-medium">{category.name}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right text-muted-foreground">
+                          {category.count}
+                        </TableCell>
+                        <TableCell className="text-right font-medium text-green-500">
+                          {formatCurrency(category.total)}
+                        </TableCell>
+                        <TableCell className="text-right text-muted-foreground">
+                          {percentage}%
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
             ) : (
               <div className="flex items-center justify-center h-[200px] text-muted-foreground text-sm">
                 No income sources yet
@@ -304,10 +349,18 @@ export default function IncomePage() {
                   const parentCat = cat?.parent_id
                     ? categories.find((c) => c.id === cat.parent_id)
                     : null
-                  const displayCategory =
-                    viewTier === 'parent' && parentCat
-                      ? parentCat.name
-                      : cat?.name || 'Other Income'
+                  // Summary view: show parent name if exists
+                  // Detailed view: show "Parent - Subcategory" format
+                  let displayCategory = 'Other Income'
+                  if (cat) {
+                    if (viewTier === 'parent' && parentCat) {
+                      displayCategory = parentCat.name
+                    } else if (viewTier === 'subcategory' && parentCat) {
+                      displayCategory = `${parentCat.name} - ${cat.name}`
+                    } else {
+                      displayCategory = cat.name
+                    }
+                  }
 
                   return (
                     <TableRow key={t.id}>

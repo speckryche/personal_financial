@@ -138,6 +138,7 @@ export interface AggregatedCategory {
   name: string
   color: string | null
   total: number
+  count: number
   isParent: boolean
 }
 
@@ -154,7 +155,7 @@ export function aggregateByParentCategory(
   }>,
   categories: Category[]
 ): AggregatedCategory[] {
-  const totals = new Map<string, { name: string; color: string | null; total: number; isParent: boolean }>()
+  const totals = new Map<string, { name: string; color: string | null; total: number; count: number; isParent: boolean }>()
 
   for (const t of transactions) {
     const cat = t.category
@@ -163,11 +164,13 @@ export function aggregateByParentCategory(
       const existing = totals.get('uncategorized')
       if (existing) {
         existing.total += Math.abs(t.amount)
+        existing.count += 1
       } else {
         totals.set('uncategorized', {
           name: 'Uncategorized',
           color: '#6b7280',
           total: Math.abs(t.amount),
+          count: 1,
           isParent: false,
         })
       }
@@ -180,11 +183,13 @@ export function aggregateByParentCategory(
       const existing = totals.get(key)
       if (existing) {
         existing.total += Math.abs(t.amount)
+        existing.count += 1
       } else {
         totals.set(key, {
           name: cat.parent.name,
           color: cat.parent.color,
           total: Math.abs(t.amount),
+          count: 1,
           isParent: true,
         })
       }
@@ -195,11 +200,13 @@ export function aggregateByParentCategory(
       const hasChildren = categories.some((c) => c.parent_id === cat.id)
       if (existing) {
         existing.total += Math.abs(t.amount)
+        existing.count += 1
       } else {
         totals.set(key, {
           name: cat.name,
           color: cat.color,
           total: Math.abs(t.amount),
+          count: 1,
           isParent: hasChildren,
         })
       }
@@ -214,6 +221,7 @@ export function aggregateByParentCategory(
 /**
  * Aggregate transactions by subcategory for Tier 2 (Detailed) view
  * Uses the direct category on each transaction
+ * Shows "Parent - Subcategory" format when parent exists
  */
 export function aggregateBySubcategory(
   transactions: Array<{
@@ -223,10 +231,11 @@ export function aggregateBySubcategory(
       name: string
       color: string | null
       parent_id: string | null
+      parent?: { id: string; name: string; color: string | null } | null
     } | null
   }>
 ): AggregatedCategory[] {
-  const totals = new Map<string, { name: string; color: string | null; total: number }>()
+  const totals = new Map<string, { name: string; color: string | null; total: number; count: number }>()
 
   for (const t of transactions) {
     const cat = t.category
@@ -234,11 +243,13 @@ export function aggregateBySubcategory(
       const existing = totals.get('uncategorized')
       if (existing) {
         existing.total += Math.abs(t.amount)
+        existing.count += 1
       } else {
         totals.set('uncategorized', {
           name: 'Uncategorized',
           color: '#6b7280',
           total: Math.abs(t.amount),
+          count: 1,
         })
       }
       continue
@@ -246,13 +257,18 @@ export function aggregateBySubcategory(
 
     const key = cat.id
     const existing = totals.get(key)
+    // Build display name: "Parent - Subcategory" if parent exists, otherwise just category name
+    const displayName = cat.parent ? `${cat.parent.name} - ${cat.name}` : cat.name
+
     if (existing) {
       existing.total += Math.abs(t.amount)
+      existing.count += 1
     } else {
       totals.set(key, {
-        name: cat.name,
+        name: displayName,
         color: cat.color,
         total: Math.abs(t.amount),
+        count: 1,
       })
     }
   }

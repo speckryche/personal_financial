@@ -179,6 +179,11 @@ export interface Database {
         Insert: Omit<NetWorthSnapshot, 'id' | 'created_at' | 'total_assets' | 'total_liabilities' | 'net_worth'>
         Update: Partial<Omit<NetWorthSnapshot, 'id' | 'created_at' | 'total_assets' | 'total_liabilities' | 'net_worth'>>
       }
+      qb_ignored_accounts: {
+        Row: QBIgnoredAccount
+        Insert: Omit<QBIgnoredAccount, 'id' | 'created_at'>
+        Update: Partial<Omit<QBIgnoredAccount, 'id' | 'created_at'>>
+      }
     }
     Enums: {
       net_worth_bucket: NetWorthBucket
@@ -195,6 +200,13 @@ export interface TransactionTypeMapping {
   mapped_type: 'income' | 'expense'
   created_at: string
   updated_at: string
+}
+
+export interface QBIgnoredAccount {
+  id: string
+  user_id: string
+  qb_account_name: string
+  created_at: string
 }
 
 // Crypto types (from external Supabase)

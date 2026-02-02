@@ -16,12 +16,14 @@ import {
   Menu,
   X,
   ChevronRight,
+  Wallet,
 } from 'lucide-react'
 import { useState } from 'react'
 import { ThemeToggle } from '@/components/theme-toggle'
 
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+  { name: 'Accounts', href: '/accounts', icon: Wallet },
   { name: 'Net Worth', href: '/net-worth', icon: TrendingUp },
   { name: 'Expenses', href: '/expenses', icon: Receipt },
   { name: 'Income', href: '/income', icon: DollarSign },

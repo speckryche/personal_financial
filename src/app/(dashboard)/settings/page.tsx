@@ -32,17 +32,24 @@ import {
 } from '@/components/ui/table'
 import { useToast } from '@/components/ui/use-toast'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Plus, Trash2, Loader2, ChevronRight, AlertTriangle, Pencil } from 'lucide-react'
-import { formatCurrency, formatDate } from '@/lib/utils'
+import { Plus, Trash2, Loader2, ChevronRight, AlertTriangle, Pencil, ChevronDown, Eye, EyeOff } from 'lucide-react'
+import { formatCurrency } from '@/lib/utils'
 import { CategoryMapping } from '@/components/settings/category-mapping'
-import { TransactionTypeMapping } from '@/components/settings/transaction-type-mapping'
+import { Badge } from '@/components/ui/badge'
+import { Checkbox } from '@/components/ui/checkbox'
+import {
+  getAccountsWithBalances,
+  setStartingBalance,
+  isLiabilityAccount,
+  type AccountWithBalance,
+} from '@/lib/account-balance'
 import {
   buildCategoryTree,
   getParentCategories,
   getChildrenCount,
   type CategoryWithChildren,
 } from '@/lib/category-utils'
-import type { Account, AccountType, NetWorthBucket, Category, HomeEntry } from '@/types/database'
+import type { Account, AccountType, NetWorthBucket, Category } from '@/types/database'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -58,9 +65,10 @@ export default function SettingsPage() {
   const supabase = createClient()
   const { toast } = useToast()
   const [accounts, setAccounts] = useState<Account[]>([])
+  const [accountsWithBalances, setAccountsWithBalances] = useState<AccountWithBalance[]>([])
   const [categories, setCategories] = useState<Category[]>([])
-  const [homeEntries, setHomeEntries] = useState<HomeEntry[]>([])
   const [loading, setLoading] = useState(true)
+  const [showInactive, setShowInactive] = useState(false)
 
   // Form states
   const [newAccount, setNewAccount] = useState({
@@ -68,7 +76,22 @@ export default function SettingsPage() {
     account_type: 'checking' as AccountType,
     net_worth_bucket: 'cash' as NetWorthBucket,
     institution: '',
+    starting_balance: '',
+    starting_balance_date: new Date().toISOString().split('T')[0],
   })
+
+  // Edit account state
+  const [editAccount, setEditAccount] = useState<{
+    id: string
+    name: string
+    account_type: AccountType
+    net_worth_bucket: NetWorthBucket
+    institution: string
+    is_active: boolean
+    starting_balance: string
+    starting_balance_date: string
+  } | null>(null)
+  const [isEditingAccount, setIsEditingAccount] = useState(false)
 
   const [newCategory, setNewCategory] = useState({
     name: '',
@@ -94,16 +117,8 @@ export default function SettingsPage() {
   } | null>(null)
   const [isEditingCategory, setIsEditingCategory] = useState(false)
 
-  const [newHomeEntry, setNewHomeEntry] = useState({
-    property_name: 'Primary Residence',
-    home_value: '',
-    mortgage_balance: '',
-    notes: '',
-  })
-
   const [isAddingAccount, setIsAddingAccount] = useState(false)
   const [isAddingCategory, setIsAddingCategory] = useState(false)
-  const [isAddingHome, setIsAddingHome] = useState(false)
   const [dialogOpen, setDialogOpen] = useState<'account' | 'category' | 'home' | null>(null)
   const [activeTab, setActiveTab] = useState('accounts')
 
@@ -113,15 +128,22 @@ export default function SettingsPage() {
 
   const loadData = async () => {
     setLoading(true)
-    const [accountsRes, categoriesRes, homeRes] = await Promise.all([
+    const { data: { user } } = await supabase.auth.getUser()
+
+    const [accountsRes, categoriesRes] = await Promise.all([
       supabase.from('accounts').select('*').order('name'),
       supabase.from('categories').select('*').order('name'),
-      supabase.from('home_entries').select('*').order('entry_date', { ascending: false }),
     ])
 
-    if (accountsRes.data) setAccounts(accountsRes.data)
+    if (accountsRes.data) {
+      setAccounts(accountsRes.data)
+      // Also load accounts with balances
+      if (user) {
+        const withBalances = await getAccountsWithBalances(supabase, user.id)
+        setAccountsWithBalances(withBalances)
+      }
+    }
     if (categoriesRes.data) setCategories(categoriesRes.data)
-    if (homeRes.data) setHomeEntries(homeRes.data)
     setLoading(false)
   }
 
@@ -132,13 +154,13 @@ export default function SettingsPage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
-    const { error } = await supabase.from('accounts').insert({
+    const { data: accountData, error } = await supabase.from('accounts').insert({
       user_id: user.id,
       name: newAccount.name,
       account_type: newAccount.account_type,
       net_worth_bucket: newAccount.net_worth_bucket,
       institution: newAccount.institution || null,
-    })
+    }).select().single()
 
     if (error) {
       toast({
@@ -147,17 +169,97 @@ export default function SettingsPage() {
         variant: 'destructive',
       })
     } else {
+      // If starting balance was provided, save it
+      if (newAccount.starting_balance && accountData) {
+        const balance = parseFloat(newAccount.starting_balance)
+        if (!isNaN(balance)) {
+          await setStartingBalance(
+            supabase,
+            accountData.id,
+            balance,
+            newAccount.starting_balance_date
+          )
+        }
+      }
+
       toast({ title: 'Account added successfully' })
       setNewAccount({
         name: '',
         account_type: 'checking',
         net_worth_bucket: 'cash',
         institution: '',
+        starting_balance: '',
+        starting_balance_date: new Date().toISOString().split('T')[0],
       })
       setDialogOpen(null)
       loadData()
     }
     setIsAddingAccount(false)
+  }
+
+  const handleEditAccountClick = (account: AccountWithBalance) => {
+    setEditAccount({
+      id: account.id,
+      name: account.name,
+      account_type: account.account_type,
+      net_worth_bucket: account.net_worth_bucket,
+      institution: account.institution || '',
+      is_active: account.is_active,
+      starting_balance: account.starting_balance?.toString() || '',
+      starting_balance_date: account.starting_balance_date || new Date().toISOString().split('T')[0],
+    })
+  }
+
+  const handleUpdateAccount = async () => {
+    if (!editAccount || !editAccount.name) return
+    setIsEditingAccount(true)
+
+    const { error } = await supabase
+      .from('accounts')
+      .update({
+        name: editAccount.name,
+        account_type: editAccount.account_type,
+        net_worth_bucket: editAccount.net_worth_bucket,
+        institution: editAccount.institution || null,
+        is_active: editAccount.is_active,
+      })
+      .eq('id', editAccount.id)
+
+    if (error) {
+      toast({ title: 'Error', description: error.message, variant: 'destructive' })
+    } else {
+      // Update starting balance if changed
+      if (editAccount.starting_balance) {
+        const balance = parseFloat(editAccount.starting_balance)
+        if (!isNaN(balance)) {
+          await setStartingBalance(
+            supabase,
+            editAccount.id,
+            balance,
+            editAccount.starting_balance_date
+          )
+        }
+      }
+
+      toast({ title: 'Account updated successfully' })
+      setEditAccount(null)
+      loadData()
+    }
+    setIsEditingAccount(false)
+  }
+
+  const handleToggleAccountActive = async (account: Account) => {
+    const { error } = await supabase
+      .from('accounts')
+      .update({ is_active: !account.is_active })
+      .eq('id', account.id)
+
+    if (error) {
+      toast({ title: 'Error', description: error.message, variant: 'destructive' })
+    } else {
+      toast({ title: account.is_active ? 'Account deactivated' : 'Account activated' })
+      loadData()
+    }
   }
 
   const handleDeleteAccount = async (id: string) => {
@@ -312,48 +414,6 @@ export default function SettingsPage() {
     setIsEditingCategory(false)
   }
 
-  const handleAddHomeEntry = async () => {
-    if (!newHomeEntry.home_value) return
-    setIsAddingHome(true)
-
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-
-    const { error } = await supabase.from('home_entries').insert({
-      user_id: user.id,
-      property_name: newHomeEntry.property_name,
-      entry_date: new Date().toISOString().split('T')[0],
-      home_value: parseFloat(newHomeEntry.home_value),
-      mortgage_balance: parseFloat(newHomeEntry.mortgage_balance) || 0,
-      notes: newHomeEntry.notes || null,
-    })
-
-    if (error) {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' })
-    } else {
-      toast({ title: 'Home entry added successfully' })
-      setNewHomeEntry({
-        property_name: 'Primary Residence',
-        home_value: '',
-        mortgage_balance: '',
-        notes: '',
-      })
-      setDialogOpen(null)
-      loadData()
-    }
-    setIsAddingHome(false)
-  }
-
-  const handleDeleteHomeEntry = async (id: string) => {
-    const { error } = await supabase.from('home_entries').delete().eq('id', id)
-    if (error) {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' })
-    } else {
-      toast({ title: 'Home entry deleted' })
-      loadData()
-    }
-  }
-
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -375,9 +435,7 @@ export default function SettingsPage() {
         <TabsList>
           <TabsTrigger value="accounts">Accounts</TabsTrigger>
           <TabsTrigger value="categories">Categories</TabsTrigger>
-          <TabsTrigger value="qb-types">QB Types</TabsTrigger>
           <TabsTrigger value="qb-mappings">QB Categories</TabsTrigger>
-          <TabsTrigger value="home">Home Value</TabsTrigger>
         </TabsList>
 
         {/* Accounts Tab */}
@@ -387,7 +445,7 @@ export default function SettingsPage() {
               <div>
                 <CardTitle>Accounts</CardTitle>
                 <CardDescription>
-                  Manage your bank accounts, credit cards, and investment accounts
+                  Manage your bank accounts, credit cards, and investment accounts with balance tracking
                 </CardDescription>
               </div>
               <Dialog open={dialogOpen === 'account'} onOpenChange={(o) => setDialogOpen(o ? 'account' : null)}>
@@ -418,9 +476,18 @@ export default function SettingsPage() {
                       <Label>Account Type</Label>
                       <Select
                         value={newAccount.account_type}
-                        onValueChange={(v: AccountType) =>
-                          setNewAccount({ ...newAccount, account_type: v })
-                        }
+                        onValueChange={(v: AccountType) => {
+                          // Auto-set net worth bucket based on account type
+                          let bucket: NetWorthBucket = 'cash'
+                          if (['credit_card', 'loan', 'mortgage'].includes(v)) {
+                            bucket = 'liabilities'
+                          } else if (v === 'investment') {
+                            bucket = 'investments'
+                          } else if (v === 'retirement') {
+                            bucket = 'retirement'
+                          }
+                          setNewAccount({ ...newAccount, account_type: v, net_worth_bucket: bucket })
+                        }}
                       >
                         <SelectTrigger>
                           <SelectValue />
@@ -467,6 +534,33 @@ export default function SettingsPage() {
                         onChange={(e) => setNewAccount({ ...newAccount, institution: e.target.value })}
                       />
                     </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="starting-balance">Starting Balance</Label>
+                        <Input
+                          id="starting-balance"
+                          type="number"
+                          step="0.01"
+                          placeholder="0.00"
+                          value={newAccount.starting_balance}
+                          onChange={(e) => setNewAccount({ ...newAccount, starting_balance: e.target.value })}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          {isLiabilityAccount(newAccount.account_type)
+                            ? 'Enter as positive (amount owed)'
+                            : 'Enter the current balance'}
+                        </p>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="starting-date">As of Date</Label>
+                        <Input
+                          id="starting-date"
+                          type="date"
+                          value={newAccount.starting_balance_date}
+                          onChange={(e) => setNewAccount({ ...newAccount, starting_balance_date: e.target.value })}
+                        />
+                      </div>
+                    </div>
                   </div>
                   <DialogFooter>
                     <Button onClick={handleAddAccount} disabled={isAddingAccount || !newAccount.name}>
@@ -477,49 +571,340 @@ export default function SettingsPage() {
                 </DialogContent>
               </Dialog>
             </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>Bucket</TableHead>
-                    <TableHead>Institution</TableHead>
-                    <TableHead></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {accounts.length > 0 ? (
-                    accounts.map((account) => (
-                      <TableRow key={account.id}>
-                        <TableCell className="font-medium">{account.name}</TableCell>
-                        <TableCell className="capitalize">
-                          {account.account_type.replace('_', ' ')}
-                        </TableCell>
-                        <TableCell className="capitalize">
-                          {account.net_worth_bucket.replace('_', ' ')}
-                        </TableCell>
-                        <TableCell>{account.institution || '-'}</TableCell>
-                        <TableCell>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleDeleteAccount(account.id)}
-                          >
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        </TableCell>
+            <CardContent className="space-y-6">
+              {/* Assets Section */}
+              {accountsWithBalances.filter(a => a.is_active && !isLiabilityAccount(a.account_type)).length > 0 && (
+                <div>
+                  <h3 className="text-sm font-semibold text-muted-foreground mb-2 uppercase tracking-wide">Assets</h3>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-[40%]">Name</TableHead>
+                        <TableHead className="w-[15%]">Type</TableHead>
+                        <TableHead className="w-[15%] text-right">Balance</TableHead>
+                        <TableHead className="w-[15%] text-right">Transactions</TableHead>
+                        <TableHead className="w-[15%]"></TableHead>
                       </TableRow>
-                    ))
-                  ) : (
-                    <TableRow>
-                      <TableCell colSpan={5} className="text-center text-muted-foreground">
-                        No accounts yet. Add your first account to get started.
-                      </TableCell>
-                    </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {accountsWithBalances
+                        .filter(a => a.is_active && !isLiabilityAccount(a.account_type))
+                        .map((account) => (
+                          <TableRow key={account.id}>
+                            <TableCell className="font-medium">
+                              <div className="flex items-center gap-2">
+                                {account.name}
+                                {account.institution && (
+                                  <span className="text-xs text-muted-foreground">({account.institution})</span>
+                                )}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="capitalize">
+                                {account.account_type.replace('_', ' ')}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {account.starting_balance !== null ? (
+                                <span className={account.current_balance >= 0 ? 'text-green-600 font-medium' : 'text-red-500'}>
+                                  {formatCurrency(account.current_balance)}
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground text-sm">No balance set</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right text-muted-foreground">
+                              {account.transaction_count}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleEditAccountClick(account)}
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleToggleAccountActive(account)}
+                                  title="Deactivate account"
+                                >
+                                  <EyeOff className="h-4 w-4 text-muted-foreground" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleDeleteAccount(account.id)}
+                                >
+                                  <Trash2 className="h-4 w-4 text-destructive" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+
+              {/* Liabilities Section */}
+              {accountsWithBalances.filter(a => a.is_active && isLiabilityAccount(a.account_type)).length > 0 && (
+                <div>
+                  <h3 className="text-sm font-semibold text-muted-foreground mb-2 uppercase tracking-wide">Liabilities</h3>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-[40%]">Name</TableHead>
+                        <TableHead className="w-[15%]">Type</TableHead>
+                        <TableHead className="w-[15%] text-right">Balance</TableHead>
+                        <TableHead className="w-[15%] text-right">Transactions</TableHead>
+                        <TableHead className="w-[15%]"></TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {accountsWithBalances
+                        .filter(a => a.is_active && isLiabilityAccount(a.account_type))
+                        .map((account) => (
+                          <TableRow key={account.id}>
+                            <TableCell className="font-medium">
+                              <div className="flex items-center gap-2">
+                                {account.name}
+                                {account.institution && (
+                                  <span className="text-xs text-muted-foreground">({account.institution})</span>
+                                )}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="capitalize">
+                                {account.account_type.replace('_', ' ')}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {account.starting_balance !== null ? (
+                                <span className="text-red-500 font-medium">
+                                  -{formatCurrency(Math.abs(account.current_balance))}
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground text-sm">No balance set</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right text-muted-foreground">
+                              {account.transaction_count}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleEditAccountClick(account)}
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleToggleAccountActive(account)}
+                                  title="Deactivate account"
+                                >
+                                  <EyeOff className="h-4 w-4 text-muted-foreground" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleDeleteAccount(account.id)}
+                                >
+                                  <Trash2 className="h-4 w-4 text-destructive" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+
+              {/* Inactive Section */}
+              {accountsWithBalances.filter(a => !a.is_active).length > 0 && (
+                <div>
+                  <button
+                    onClick={() => setShowInactive(!showInactive)}
+                    className="flex items-center gap-2 text-sm font-semibold text-muted-foreground mb-2 uppercase tracking-wide hover:text-foreground"
+                  >
+                    {showInactive ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                    Inactive ({accountsWithBalances.filter(a => !a.is_active).length})
+                  </button>
+                  {showInactive && (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-[40%]">Name</TableHead>
+                          <TableHead className="w-[15%]">Type</TableHead>
+                          <TableHead className="w-[45%]"></TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {accountsWithBalances
+                          .filter(a => !a.is_active)
+                          .map((account) => (
+                            <TableRow key={account.id} className="opacity-60">
+                              <TableCell className="font-medium">{account.name}</TableCell>
+                              <TableCell>
+                                <Badge variant="secondary" className="capitalize">
+                                  {account.account_type.replace('_', ' ')}
+                                </Badge>
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex gap-1">
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => handleToggleAccountActive(account)}
+                                    title="Activate account"
+                                  >
+                                    <Eye className="h-4 w-4" />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => handleDeleteAccount(account.id)}
+                                  >
+                                    <Trash2 className="h-4 w-4 text-destructive" />
+                                  </Button>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                      </TableBody>
+                    </Table>
                   )}
-                </TableBody>
-              </Table>
+                </div>
+              )}
+
+              {accountsWithBalances.length === 0 && (
+                <div className="text-center py-8 text-muted-foreground">
+                  No accounts yet. Add your first account to get started.
+                </div>
+              )}
+
+              {/* Edit Account Dialog */}
+              <Dialog open={!!editAccount} onOpenChange={(open) => !open && setEditAccount(null)}>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Edit Account</DialogTitle>
+                    <DialogDescription>
+                      Update account details and balance settings
+                    </DialogDescription>
+                  </DialogHeader>
+                  {editAccount && (
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-name">Account Name</Label>
+                        <Input
+                          id="edit-name"
+                          value={editAccount.name}
+                          onChange={(e) => setEditAccount({ ...editAccount, name: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Account Type</Label>
+                        <Select
+                          value={editAccount.account_type}
+                          onValueChange={(v: AccountType) =>
+                            setEditAccount({ ...editAccount, account_type: v })
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="checking">Checking</SelectItem>
+                            <SelectItem value="savings">Savings</SelectItem>
+                            <SelectItem value="credit_card">Credit Card</SelectItem>
+                            <SelectItem value="investment">Investment</SelectItem>
+                            <SelectItem value="retirement">Retirement</SelectItem>
+                            <SelectItem value="loan">Loan</SelectItem>
+                            <SelectItem value="mortgage">Mortgage</SelectItem>
+                            <SelectItem value="other">Other</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Net Worth Bucket</Label>
+                        <Select
+                          value={editAccount.net_worth_bucket}
+                          onValueChange={(v: NetWorthBucket) =>
+                            setEditAccount({ ...editAccount, net_worth_bucket: v })
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="cash">Cash</SelectItem>
+                            <SelectItem value="investments">Investments</SelectItem>
+                            <SelectItem value="real_estate">Real Estate</SelectItem>
+                            <SelectItem value="crypto">Crypto</SelectItem>
+                            <SelectItem value="retirement">Retirement</SelectItem>
+                            <SelectItem value="liabilities">Liabilities</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-institution">Institution</Label>
+                        <Input
+                          id="edit-institution"
+                          value={editAccount.institution}
+                          onChange={(e) => setEditAccount({ ...editAccount, institution: e.target.value })}
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="edit-starting-balance">Starting Balance</Label>
+                          <Input
+                            id="edit-starting-balance"
+                            type="number"
+                            step="0.01"
+                            placeholder="0.00"
+                            value={editAccount.starting_balance}
+                            onChange={(e) => setEditAccount({ ...editAccount, starting_balance: e.target.value })}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="edit-starting-date">As of Date</Label>
+                          <Input
+                            id="edit-starting-date"
+                            type="date"
+                            value={editAccount.starting_balance_date}
+                            onChange={(e) => setEditAccount({ ...editAccount, starting_balance_date: e.target.value })}
+                          />
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Checkbox
+                          id="edit-active"
+                          checked={editAccount.is_active}
+                          onCheckedChange={(checked) =>
+                            setEditAccount({ ...editAccount, is_active: checked === true })
+                          }
+                        />
+                        <Label htmlFor="edit-active">Active (include in balance tracking)</Label>
+                      </div>
+                    </div>
+                  )}
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setEditAccount(null)}>
+                      Cancel
+                    </Button>
+                    <Button onClick={handleUpdateAccount} disabled={isEditingAccount || !editAccount?.name}>
+                      {isEditingAccount && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      Save Changes
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
             </CardContent>
           </Card>
         </TabsContent>
@@ -835,23 +1220,6 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
 
-        {/* QuickBooks Transaction Types Tab */}
-        <TabsContent value="qb-types" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <div>
-                <CardTitle>Transaction Type Mappings</CardTitle>
-                <CardDescription>
-                  Map QuickBooks transaction types (Check, Deposit, etc.) to Income or Expense
-                </CardDescription>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <TransactionTypeMapping />
-            </CardContent>
-          </Card>
-        </TabsContent>
-
         {/* QuickBooks Category Mappings Tab */}
         <TabsContent value="qb-mappings" className="space-y-4">
           <Card>
@@ -869,137 +1237,6 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
 
-        {/* Home Value Tab */}
-        <TabsContent value="home" className="space-y-4">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle>Home Value</CardTitle>
-                <CardDescription>
-                  Track your property value and mortgage balance
-                </CardDescription>
-              </div>
-              <Dialog open={dialogOpen === 'home'} onOpenChange={(o) => setDialogOpen(o ? 'home' : null)}>
-                <DialogTrigger asChild>
-                  <Button>
-                    <Plus className="mr-2 h-4 w-4" />
-                    Add Entry
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Add Home Value Entry</DialogTitle>
-                    <DialogDescription>
-                      Record your current home value and mortgage balance
-                    </DialogDescription>
-                  </DialogHeader>
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="property">Property Name</Label>
-                      <Input
-                        id="property"
-                        placeholder="e.g., Primary Residence"
-                        value={newHomeEntry.property_name}
-                        onChange={(e) =>
-                          setNewHomeEntry({ ...newHomeEntry, property_name: e.target.value })
-                        }
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="home-value">Home Value ($)</Label>
-                      <Input
-                        id="home-value"
-                        type="number"
-                        placeholder="500000"
-                        value={newHomeEntry.home_value}
-                        onChange={(e) =>
-                          setNewHomeEntry({ ...newHomeEntry, home_value: e.target.value })
-                        }
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="mortgage">Mortgage Balance ($)</Label>
-                      <Input
-                        id="mortgage"
-                        type="number"
-                        placeholder="300000"
-                        value={newHomeEntry.mortgage_balance}
-                        onChange={(e) =>
-                          setNewHomeEntry({ ...newHomeEntry, mortgage_balance: e.target.value })
-                        }
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="notes">Notes (optional)</Label>
-                      <Input
-                        id="notes"
-                        placeholder="e.g., Based on Zillow estimate"
-                        value={newHomeEntry.notes}
-                        onChange={(e) =>
-                          setNewHomeEntry({ ...newHomeEntry, notes: e.target.value })
-                        }
-                      />
-                    </div>
-                  </div>
-                  <DialogFooter>
-                    <Button onClick={handleAddHomeEntry} disabled={isAddingHome || !newHomeEntry.home_value}>
-                      {isAddingHome && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                      Add Entry
-                    </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Property</TableHead>
-                    <TableHead className="text-right">Home Value</TableHead>
-                    <TableHead className="text-right">Mortgage</TableHead>
-                    <TableHead className="text-right">Equity</TableHead>
-                    <TableHead></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {homeEntries.length > 0 ? (
-                    homeEntries.map((entry) => (
-                      <TableRow key={entry.id}>
-                        <TableCell>{formatDate(entry.entry_date)}</TableCell>
-                        <TableCell className="font-medium">{entry.property_name}</TableCell>
-                        <TableCell className="text-right">
-                          {formatCurrency(Number(entry.home_value))}
-                        </TableCell>
-                        <TableCell className="text-right text-red-500">
-                          -{formatCurrency(Number(entry.mortgage_balance))}
-                        </TableCell>
-                        <TableCell className="text-right text-green-500 font-medium">
-                          {formatCurrency(Number(entry.equity))}
-                        </TableCell>
-                        <TableCell>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleDeleteHomeEntry(entry.id)}
-                          >
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  ) : (
-                    <TableRow>
-                      <TableCell colSpan={6} className="text-center text-muted-foreground">
-                        No home value entries yet. Add your property details to track real estate equity.
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        </TabsContent>
       </Tabs>
     </div>
   )

@@ -15,8 +15,9 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { formatCurrency, formatDate } from '@/lib/utils'
-import { startOfMonth, endOfMonth, format } from 'date-fns'
+import { startOfMonth, endOfMonth, format, subMonths } from 'date-fns'
 import { Loader2 } from 'lucide-react'
+import { DateRangePicker, type DateRange } from '@/components/ui/date-range-picker'
 import {
   aggregateByParentCategory,
   aggregateBySubcategory,
@@ -50,17 +51,21 @@ export default function ExpensesPage() {
   const [categories, setCategories] = useState<Category[]>([])
   const [loading, setLoading] = useState(true)
   const [viewTier, setViewTier] = useState<ViewTier>('parent')
-
-  const now = new Date()
-  const monthStart = startOfMonth(now)
-  const monthEnd = endOfMonth(now)
+  // Default to previous month since user likely has historical data
+  const [dateRange, setDateRange] = useState<DateRange>(() => ({
+    start: startOfMonth(subMonths(new Date(), 1)),
+    end: endOfMonth(subMonths(new Date(), 1)),
+  }))
 
   useEffect(() => {
     loadData()
-  }, [])
+  }, [dateRange])
 
   const loadData = async () => {
     setLoading(true)
+
+    const startDate = dateRange.start.toISOString().split('T')[0]
+    const endDate = dateRange.end.toISOString().split('T')[0]
 
     const [transactionsRes, categoriesRes] = await Promise.all([
       supabase
@@ -70,10 +75,10 @@ export default function ExpensesPage() {
           category:categories!category_id(id, name, color, parent_id)
         `)
         .eq('transaction_type', 'expense')
-        .gte('transaction_date', monthStart.toISOString().split('T')[0])
-        .lte('transaction_date', monthEnd.toISOString().split('T')[0])
+        .gte('transaction_date', startDate)
+        .lte('transaction_date', endDate)
         .order('transaction_date', { ascending: false })
-        .limit(100),
+        .limit(500),
       supabase.from('categories').select('*'),
     ])
 
@@ -121,7 +126,7 @@ export default function ExpensesPage() {
 
   const expensesByCategory = getAggregatedData()
   const totalExpenses = expensesByCategory.reduce((sum, e) => sum + e.total, 0)
-  const topCategories = expensesByCategory.slice(0, 5)
+  const topCategory = expensesByCategory[0]
 
   // Convert to chart format with colorful fallbacks
   const chartData = expensesByCategory.map((cat, index) => ({
@@ -129,6 +134,16 @@ export default function ExpensesPage() {
     value: cat.total,
     color: cat.color || CATEGORY_COLORS[index % CATEGORY_COLORS.length],
   }))
+
+  // Format date range for display
+  const getDateRangeLabel = () => {
+    const startStr = format(dateRange.start, 'MMM yyyy')
+    const endStr = format(dateRange.end, 'MMM yyyy')
+    if (startStr === endStr) {
+      return startStr
+    }
+    return `${startStr} - ${endStr}`
+  }
 
   if (loading) {
     return (
@@ -144,24 +159,27 @@ export default function ExpensesPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Expenses</h1>
           <p className="text-muted-foreground">
-            Track and analyze your spending for {format(now, 'MMMM yyyy')}
+            Track and analyze your spending
           </p>
         </div>
-        <div className="flex gap-1 bg-muted p-1 rounded-lg">
-          <Button
-            variant={viewTier === 'parent' ? 'default' : 'ghost'}
-            size="sm"
-            onClick={() => setViewTier('parent')}
-          >
-            Summary
-          </Button>
-          <Button
-            variant={viewTier === 'subcategory' ? 'default' : 'ghost'}
-            size="sm"
-            onClick={() => setViewTier('subcategory')}
-          >
-            Detailed
-          </Button>
+        <div className="flex items-center gap-4">
+          <DateRangePicker value={dateRange} onChange={setDateRange} />
+          <div className="flex gap-1 bg-muted p-1 rounded-lg">
+            <Button
+              variant={viewTier === 'parent' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setViewTier('parent')}
+            >
+              Summary
+            </Button>
+            <Button
+              variant={viewTier === 'subcategory' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setViewTier('subcategory')}
+            >
+              Detailed
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -177,7 +195,7 @@ export default function ExpensesPage() {
             <div className="text-3xl font-bold text-red-500">
               {formatCurrency(totalExpenses)}
             </div>
-            <p className="text-xs text-muted-foreground">This month</p>
+            <p className="text-xs text-muted-foreground">{getDateRangeLabel()}</p>
           </CardContent>
         </Card>
 
@@ -189,7 +207,7 @@ export default function ExpensesPage() {
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold">{transactions?.length || 0}</div>
-            <p className="text-xs text-muted-foreground">This month</p>
+            <p className="text-xs text-muted-foreground">{getDateRangeLabel()}</p>
           </CardContent>
         </Card>
 
@@ -200,9 +218,9 @@ export default function ExpensesPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold">{topCategories[0]?.name || '-'}</div>
+            <div className="text-3xl font-bold">{topCategory?.name || '-'}</div>
             <p className="text-xs text-muted-foreground">
-              {topCategories[0] ? formatCurrency(topCategories[0].total) : '-'}
+              {topCategory ? formatCurrency(topCategory.total) : '-'}
             </p>
           </CardContent>
         </Card>
@@ -231,35 +249,61 @@ export default function ExpensesPage() {
           </CardContent>
         </Card>
 
-        {/* Top Categories */}
+        {/* All Categories Table */}
         <Card>
           <CardHeader>
-            <CardTitle>Top {viewTier === 'parent' ? 'Categories' : 'Subcategories'}</CardTitle>
-            <CardDescription>Your biggest spending areas</CardDescription>
+            <CardTitle>
+              {viewTier === 'parent' ? 'All Categories' : 'All Subcategories'}
+            </CardTitle>
+            <CardDescription>
+              {viewTier === 'parent'
+                ? 'Complete breakdown by parent category'
+                : 'Complete breakdown by subcategory'}
+            </CardDescription>
           </CardHeader>
           <CardContent>
-            {topCategories.length > 0 ? (
-              <div className="space-y-4">
-                {topCategories.map((category, index) => (
-                  <div key={category.id} className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium">{category.name}</span>
-                      <span className="text-muted-foreground">
-                        {formatCurrency(category.total)}
-                      </span>
-                    </div>
-                    <div className="h-2 rounded-full bg-muted overflow-hidden">
-                      <div
-                        className="h-full rounded-full"
-                        style={{
-                          width: `${(category.total / totalExpenses) * 100}%`,
-                          backgroundColor: category.color || CATEGORY_COLORS[index % CATEGORY_COLORS.length],
-                        }}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
+            {expensesByCategory.length > 0 ? (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Category</TableHead>
+                    <TableHead className="text-right">Transactions</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                    <TableHead className="text-right">% of Total</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {expensesByCategory.map((category, index) => {
+                    const percentage = totalExpenses > 0
+                      ? ((category.total / totalExpenses) * 100).toFixed(1)
+                      : '0.0'
+                    return (
+                      <TableRow key={category.id}>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <div
+                              className="h-3 w-3 rounded-full shrink-0"
+                              style={{
+                                backgroundColor: category.color || CATEGORY_COLORS[index % CATEGORY_COLORS.length],
+                              }}
+                            />
+                            <span className="font-medium">{category.name}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right text-muted-foreground">
+                          {category.count}
+                        </TableCell>
+                        <TableCell className="text-right font-medium text-red-500">
+                          {formatCurrency(category.total)}
+                        </TableCell>
+                        <TableCell className="text-right text-muted-foreground">
+                          {percentage}%
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
             ) : (
               <div className="flex items-center justify-center h-[200px] text-muted-foreground text-sm">
                 No expense categories yet
@@ -292,10 +336,18 @@ export default function ExpensesPage() {
                   const parentCat = cat?.parent_id
                     ? categories.find((c) => c.id === cat.parent_id)
                     : null
-                  const displayCategory =
-                    viewTier === 'parent' && parentCat
-                      ? parentCat.name
-                      : cat?.name || 'Uncategorized'
+                  // Summary view: show parent name if exists
+                  // Detailed view: show "Parent - Subcategory" format
+                  let displayCategory = 'Uncategorized'
+                  if (cat) {
+                    if (viewTier === 'parent' && parentCat) {
+                      displayCategory = parentCat.name
+                    } else if (viewTier === 'subcategory' && parentCat) {
+                      displayCategory = `${parentCat.name} - ${cat.name}`
+                    } else {
+                      displayCategory = cat.name
+                    }
+                  }
 
                   return (
                     <TableRow key={t.id}>

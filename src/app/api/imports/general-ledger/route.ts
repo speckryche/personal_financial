@@ -1,14 +1,16 @@
 import { createClient } from '@/lib/supabase/server'
-import { parseQuickBooksTransactions, parseQuickBooksExcel } from '@/lib/parsers/quickbooks/transaction-parser'
+import {
+  parseGeneralLedgerCSV,
+  parseGeneralLedgerExcel,
+} from '@/lib/parsers/quickbooks/general-ledger-parser'
 import { findCategoryForTransaction } from '@/lib/categorization'
 import { findAccountForQBName } from '@/lib/account-balance'
 import { NextResponse } from 'next/server'
-import type { Category, Account } from '@/types/database'
+import type { Category, Account, QBIgnoredAccount } from '@/types/database'
 
 // Build a unique key for duplicate detection
-// Uses absolute value of amount since expenses are stored as negative but parsed as positive
-function buildTransactionKey(date: string, amount: number, description: string): string {
-  return `${date}|${Math.abs(amount).toFixed(2)}|${(description || '').toLowerCase().trim()}`
+function buildTransactionKey(date: string, amount: number, description: string, account: string | null): string {
+  return `${date}|${Math.abs(amount).toFixed(2)}|${(description || '').toLowerCase().trim()}|${(account || '').toLowerCase().trim()}`
 }
 
 export async function POST(request: Request) {
@@ -24,7 +26,6 @@ export async function POST(request: Request) {
 
     const formData = await request.formData()
     const file = formData.get('file') as File
-    const accountId = formData.get('accountId') as string | null
 
     if (!file) {
       return NextResponse.json({ error: 'No file provided' }, { status: 400 })
@@ -37,13 +38,11 @@ export async function POST(request: Request) {
     let result
 
     if (isExcel) {
-      // Parse Excel file
       const buffer = await file.arrayBuffer()
-      result = parseQuickBooksExcel(buffer)
+      result = parseGeneralLedgerExcel(buffer)
     } else {
-      // Parse CSV file
       const content = await file.text()
-      result = await parseQuickBooksTransactions(content)
+      result = await parseGeneralLedgerCSV(content)
     }
 
     if (result.errors.length > 0 && result.transactions.length === 0) {
@@ -63,7 +62,7 @@ export async function POST(request: Request) {
     if (minDate && maxDate) {
       const { data: existingTransactions } = await supabase
         .from('transactions')
-        .select('transaction_date, amount, description')
+        .select('transaction_date, amount, description, qb_account')
         .eq('user_id', user.id)
         .gte('transaction_date', minDate)
         .lte('transaction_date', maxDate)
@@ -71,7 +70,7 @@ export async function POST(request: Request) {
       if (existingTransactions) {
         existingKeys = new Set(
           existingTransactions.map(t =>
-            buildTransactionKey(t.transaction_date, Number(t.amount), t.description || '')
+            buildTransactionKey(t.transaction_date, Number(t.amount), t.description || '', t.qb_account)
           )
         )
       }
@@ -93,6 +92,16 @@ export async function POST(request: Request) {
 
     const accounts: Account[] = accountsData || []
 
+    // Fetch ignored accounts
+    const { data: ignoredData } = await supabase
+      .from('qb_ignored_accounts')
+      .select('qb_account_name')
+      .eq('user_id', user.id)
+
+    const ignoredAccounts = new Set(
+      ((ignoredData || []) as QBIgnoredAccount[]).map(a => a.qb_account_name.toLowerCase())
+    )
+
     // Fetch transaction type mappings
     const { data: typeMappingsData } = await supabase
       .from('transaction_type_mappings')
@@ -110,12 +119,13 @@ export async function POST(request: Request) {
       .insert({
         user_id: user.id,
         filename: file.name,
-        file_type: 'quickbooks_transactions',
+        file_type: 'quickbooks_general_ledger',
         record_count: result.transactions.length,
         status: 'processing',
         metadata: {
           rowCount: result.rowCount,
           skippedCount: result.skippedCount,
+          discoveredAccounts: result.discoveredAccounts.length,
           errors: result.errors,
         },
       })
@@ -128,11 +138,18 @@ export async function POST(request: Request) {
 
     const importBatchId = (importBatch as { id: string }).id
 
-    // Filter out duplicates and prepare transactions for insert
+    // Filter out duplicates and ignored accounts, prepare transactions for insert
     let duplicatesSkipped = 0
+    let ignoredFromSkippedAccounts = 0
     const transactionsToInsert = result.transactions
       .filter((t) => {
-        const key = buildTransactionKey(t.transaction_date, t.amount, t.description)
+        // Skip transactions from ignored accounts
+        if (t.qb_account && ignoredAccounts.has(t.qb_account.toLowerCase())) {
+          ignoredFromSkippedAccounts++
+          return false
+        }
+        // Skip duplicates
+        const key = buildTransactionKey(t.transaction_date, t.amount, t.description, t.qb_account)
         if (existingKeys.has(key)) {
           duplicatesSkipped++
           return false
@@ -145,25 +162,29 @@ export async function POST(request: Request) {
         const mappedType = typeMappings.get(qbType)
         const transactionType = mappedType || t.transaction_type
 
-        // Auto-categorize based on "Account full name" (qb_account) and transaction type
+        // Auto-categorize based on split_account (the QB category) first, then qb_account
+        // In GL format, split_account contains the category (e.g., "Groceries", "Dining")
         const categoryId = findCategoryForTransaction(
-          t.qb_account,
+          t.split_account || t.qb_account,
           t.qb_transaction_type,
           categories
         )
 
         // Auto-link to account based on qb_account name mapping
         const linkedAccount = findAccountForQBName(t.qb_account, accounts)
-        const linkedAccountId = accountId || linkedAccount?.id || null
 
-        // Adjust amount sign based on transaction type
-        const amount = transactionType === 'expense'
-          ? -Math.abs(t.amount)
-          : Math.abs(t.amount)
+        // Amount from GL is already signed correctly (debit - credit)
+        // For expenses, we want negative; for income, positive
+        let amount = t.amount
+        if (transactionType === 'expense' && amount > 0) {
+          amount = -amount
+        } else if (transactionType === 'income' && amount < 0) {
+          amount = -amount
+        }
 
         return {
           user_id: user.id,
-          account_id: linkedAccountId,
+          account_id: linkedAccount?.id || null,
           import_batch_id: importBatchId,
           transaction_date: t.transaction_date,
           description: t.description,
@@ -174,8 +195,6 @@ export async function POST(request: Request) {
           qb_transaction_type: t.qb_transaction_type,
           qb_num: t.qb_num,
           qb_name: t.qb_name,
-          qb_class: t.qb_class,
-          qb_split: t.qb_split,
           qb_account: t.qb_account,
         }
       })
@@ -217,6 +236,8 @@ export async function POST(request: Request) {
           rowCount: result.rowCount,
           skippedCount: result.skippedCount,
           duplicatesSkipped,
+          ignoredFromSkippedAccounts,
+          discoveredAccounts: result.discoveredAccounts.length,
           errors: result.errors,
         },
       })
@@ -228,10 +249,12 @@ export async function POST(request: Request) {
       imported: insertedCount,
       skipped: result.skippedCount,
       duplicatesSkipped,
+      ignoredFromSkippedAccounts,
+      discoveredAccounts: result.discoveredAccounts.length,
       errors: result.errors,
     })
   } catch (error) {
-    console.error('Import error:', error)
+    console.error('GL Import error:', error)
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }
