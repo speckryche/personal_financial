@@ -10,44 +10,46 @@ export function getTransactionTypeFromQB(qbTransactionType: string | null): Tran
 
   const type = qbTransactionType.toLowerCase()
 
+  // Check expense types FIRST (more specific patterns)
+  // This prevents "credit card expense" from matching "credit" as income
+  const expenseTypes = [
+    'credit card expense',
+    'credit card charge',
+    'credit card credit', // This is a credit on the card (refund), but still an expense category adjustment
+    'credit card',
+    'check',
+    'bill payment',
+    'bill',
+    'expense',
+    'debit',
+    'purchase',
+  ]
+
+  // Transfer types
+  const transferTypes = ['transfer', 'journal entry']
+
   // Income types in QuickBooks
   const incomeTypes = [
     'deposit',
     'payment',
     'invoice',
     'sales receipt',
-    'credit',
     'refund',
     'sales',
     'income',
   ]
 
-  // Expense types in QuickBooks
-  const expenseTypes = [
-    'check',
-    'bill',
-    'expense',
-    'credit card',
-    'debit',
-    'purchase',
-    'bill payment',
-    'credit card charge',
-    'credit card credit',
-  ]
-
-  // Transfer types
-  const transferTypes = ['transfer', 'journal entry']
-
-  if (incomeTypes.some((t) => type.includes(t))) {
-    return 'income'
-  }
-
+  // Check expense types first (they're more specific)
   if (expenseTypes.some((t) => type.includes(t))) {
     return 'expense'
   }
 
   if (transferTypes.some((t) => type.includes(t))) {
     return 'transfer'
+  }
+
+  if (incomeTypes.some((t) => type.includes(t))) {
+    return 'income'
   }
 
   // Default to expense

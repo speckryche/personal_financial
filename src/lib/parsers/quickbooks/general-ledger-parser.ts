@@ -227,9 +227,14 @@ function determineTransactionType(
   }
 
   // Check if split account suggests income or expense
+  // Be careful not to match "Income Taxes" or similar expense categories
   const splitLower = (splitAccount || '').toLowerCase()
-  if (splitLower.includes('income')) {
-    return 'income'
+  if (splitLower.includes('income') && !splitLower.includes('income tax')) {
+    // Additional check: if it starts with "Income" or contains "Income -" it's likely income
+    // But "Income Taxes" is an expense category
+    if (splitLower.startsWith('income') || splitLower.includes('income -') || splitLower.includes('income:')) {
+      return 'income'
+    }
   }
 
   // Credit card payments, loan payments, etc. from checking are transfers/expenses

@@ -30,7 +30,7 @@ import {
 } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/use-toast'
 import { Loader2, Save, RefreshCw, AlertCircle, ChevronDown, ChevronRight, Link2, Plus } from 'lucide-react'
-import type { Category } from '@/types/database'
+import type { Category, Transaction } from '@/types/database'
 import { getSubcategoriesForMapping } from '@/lib/category-utils'
 import { findSimilarAccounts, type SimilarAccount } from '@/lib/string-similarity'
 
@@ -63,6 +63,13 @@ export function CategoryMapping({ categories, onCategoriesUpdate }: CategoryMapp
   const [selectedAccountForSimilar, setSelectedAccountForSimilar] = useState<QBAccountMapping | null>(null)
   const [selectedSimilarAccounts, setSelectedSimilarAccounts] = useState<Set<string>>(new Set())
   const [addingSimilar, setAddingSimilar] = useState(false)
+
+  // Uncategorized transactions modal state
+  const [uncategorizedModalOpen, setUncategorizedModalOpen] = useState(false)
+  const [uncategorizedTransactions, setUncategorizedTransactions] = useState<Transaction[]>([])
+  const [selectedQBAccountForUncategorized, setSelectedQBAccountForUncategorized] = useState<string | null>(null)
+  const [loadingUncategorized, setLoadingUncategorized] = useState(false)
+  const [savingCategory, setSavingCategory] = useState<string | null>(null)
 
   useEffect(() => {
     loadQBAccounts()
@@ -454,6 +461,97 @@ export function CategoryMapping({ categories, onCategoriesUpdate }: CategoryMapp
     return category?.name || 'Unknown'
   }
 
+  const openUncategorizedModal = async (qbAccountName: string) => {
+    setSelectedQBAccountForUncategorized(qbAccountName)
+    setLoadingUncategorized(true)
+    setUncategorizedModalOpen(true)
+
+    const { data: transactions } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('qb_account', qbAccountName)
+      .is('category_id', null)
+      .order('transaction_date', { ascending: false })
+
+    setUncategorizedTransactions(transactions || [])
+    setLoadingUncategorized(false)
+  }
+
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+    }).format(amount)
+  }
+
+  const formatDate = (dateStr: string) => {
+    return new Date(dateStr).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    })
+  }
+
+  const assignCategoryToTransaction = async (transactionId: string, categoryId: string) => {
+    if (categoryId === 'none') return
+
+    setSavingCategory(transactionId)
+
+    const { error } = await supabase
+      .from('transactions')
+      .update({ category_id: categoryId })
+      .eq('id', transactionId)
+
+    if (error) {
+      toast({
+        title: 'Error assigning category',
+        description: error.message,
+        variant: 'destructive',
+      })
+    } else {
+      // Remove from local list
+      setUncategorizedTransactions((prev) => prev.filter((t) => t.id !== transactionId))
+      toast({
+        title: 'Category assigned',
+        description: 'Transaction has been categorized.',
+      })
+      // Refresh the main list
+      await loadQBAccounts()
+    }
+
+    setSavingCategory(null)
+  }
+
+  const assignCategoryToAllInModal = async (categoryId: string) => {
+    if (categoryId === 'none' || uncategorizedTransactions.length === 0) return
+
+    setSavingCategory('all')
+
+    const transactionIds = uncategorizedTransactions.map((t) => t.id)
+
+    const { error } = await supabase
+      .from('transactions')
+      .update({ category_id: categoryId })
+      .in('id', transactionIds)
+
+    if (error) {
+      toast({
+        title: 'Error assigning category',
+        description: error.message,
+        variant: 'destructive',
+      })
+    } else {
+      toast({
+        title: 'Categories assigned',
+        description: `${transactionIds.length} transaction(s) have been categorized.`,
+      })
+      setUncategorizedTransactions([])
+      await loadQBAccounts()
+    }
+
+    setSavingCategory(null)
+  }
+
   const totalUncategorized = qbAccounts.reduce((sum, a) => sum + a.uncategorizedCount, 0)
   const hasPendingChanges = Object.keys(pendingMappings).length > 0
   const totalSimilarUnmapped = qbAccounts.reduce(
@@ -600,7 +698,12 @@ export function CategoryMapping({ categories, onCategoriesUpdate }: CategoryMapp
                     <TableCell className="text-right">{account.count}</TableCell>
                     <TableCell className="text-right">
                       {account.uncategorizedCount > 0 ? (
-                        <span className="text-amber-600 font-medium">{account.uncategorizedCount}</span>
+                        <button
+                          onClick={() => openUncategorizedModal(account.accountName)}
+                          className="text-amber-600 font-medium hover:underline cursor-pointer"
+                        >
+                          {account.uncategorizedCount}
+                        </button>
                       ) : (
                         <span className="text-muted-foreground">0</span>
                       )}
@@ -777,6 +880,161 @@ export function CategoryMapping({ categories, onCategoriesUpdate }: CategoryMapp
                 <Plus className="mr-2 h-4 w-4" />
               )}
               Add {selectedSimilarAccounts.size} Account{selectedSimilarAccounts.size !== 1 && 's'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Uncategorized Transactions Modal */}
+      <Dialog open={uncategorizedModalOpen} onOpenChange={setUncategorizedModalOpen}>
+        <DialogContent className="max-w-3xl max-h-[80vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Uncategorized Transactions</DialogTitle>
+            <DialogDescription>
+              {uncategorizedTransactions.length} uncategorized transaction{uncategorizedTransactions.length !== 1 && 's'} for &quot;{selectedQBAccountForUncategorized}&quot;
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* Bulk categorize option */}
+          {uncategorizedTransactions.length > 0 && (
+            <div className="flex items-center gap-3 p-3 bg-muted/50 rounded-lg">
+              <span className="text-sm font-medium">Categorize all as:</span>
+              <Select
+                onValueChange={(value) => assignCategoryToAllInModal(value)}
+                disabled={savingCategory === 'all'}
+              >
+                <SelectTrigger className="w-56">
+                  <SelectValue placeholder="Select category..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {getSubcategoriesForMapping(categories, 'expense').map((group) => (
+                    <div key={group.parent.id}>
+                      <SelectItem value={`__parent_${group.parent.id}__`} disabled>
+                        <span className="text-xs font-semibold">— {group.parent.name} —</span>
+                      </SelectItem>
+                      {group.subcategories.map((sub) => (
+                        <SelectItem key={sub.id} value={sub.id}>
+                          {sub.name}
+                        </SelectItem>
+                      ))}
+                    </div>
+                  ))}
+                  {getSubcategoriesForMapping(categories, 'income').length > 0 && (
+                    <>
+                      <SelectItem value="__income_divider__" disabled>
+                        <span className="text-xs font-semibold">━━━ INCOME ━━━</span>
+                      </SelectItem>
+                      {getSubcategoriesForMapping(categories, 'income').map((group) => (
+                        <div key={group.parent.id}>
+                          <SelectItem value={`__parent_${group.parent.id}__`} disabled>
+                            <span className="text-xs font-semibold">— {group.parent.name} —</span>
+                          </SelectItem>
+                          {group.subcategories.map((sub) => (
+                            <SelectItem key={sub.id} value={sub.id}>
+                              {sub.name}
+                            </SelectItem>
+                          ))}
+                        </div>
+                      ))}
+                    </>
+                  )}
+                </SelectContent>
+              </Select>
+              {savingCategory === 'all' && <Loader2 className="h-4 w-4 animate-spin" />}
+            </div>
+          )}
+
+          <div className="flex-1 overflow-y-auto min-h-0">
+            {loadingUncategorized ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin" />
+              </div>
+            ) : uncategorizedTransactions.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                No uncategorized transactions found.
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Description</TableHead>
+                    <TableHead>Split Account</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                    <TableHead>Assign Category</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {uncategorizedTransactions.map((txn) => (
+                    <TableRow key={txn.id}>
+                      <TableCell className="text-sm whitespace-nowrap">
+                        {formatDate(txn.transaction_date)}
+                      </TableCell>
+                      <TableCell className="text-sm max-w-[180px] truncate" title={txn.description || txn.memo || ''}>
+                        {txn.description || txn.memo || txn.qb_name || 'No description'}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground max-w-[120px] truncate" title={txn.split_account || ''}>
+                        {txn.split_account || '—'}
+                      </TableCell>
+                      <TableCell className={`text-right font-medium whitespace-nowrap ${
+                        Number(txn.amount) >= 0 ? 'text-green-600' : 'text-red-500'
+                      }`}>
+                        {formatCurrency(Number(txn.amount))}
+                      </TableCell>
+                      <TableCell>
+                        <Select
+                          onValueChange={(value) => assignCategoryToTransaction(txn.id, value)}
+                          disabled={savingCategory === txn.id}
+                        >
+                          <SelectTrigger className="w-40 h-8 text-xs">
+                            <SelectValue placeholder="Select..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {getSubcategoriesForMapping(categories, 'expense').map((group) => (
+                              <div key={group.parent.id}>
+                                <SelectItem value={`__parent_${group.parent.id}__`} disabled>
+                                  <span className="text-xs font-semibold">— {group.parent.name} —</span>
+                                </SelectItem>
+                                {group.subcategories.map((sub) => (
+                                  <SelectItem key={sub.id} value={sub.id}>
+                                    {sub.name}
+                                  </SelectItem>
+                                ))}
+                              </div>
+                            ))}
+                            {getSubcategoriesForMapping(categories, 'income').length > 0 && (
+                              <>
+                                <SelectItem value="__income_divider__" disabled>
+                                  <span className="text-xs font-semibold">━━━ INCOME ━━━</span>
+                                </SelectItem>
+                                {getSubcategoriesForMapping(categories, 'income').map((group) => (
+                                  <div key={group.parent.id}>
+                                    <SelectItem value={`__parent_${group.parent.id}__`} disabled>
+                                      <span className="text-xs font-semibold">— {group.parent.name} —</span>
+                                    </SelectItem>
+                                    {group.subcategories.map((sub) => (
+                                      <SelectItem key={sub.id} value={sub.id}>
+                                        {sub.name}
+                                      </SelectItem>
+                                    ))}
+                                  </div>
+                                ))}
+                              </>
+                            )}
+                          </SelectContent>
+                        </Select>
+                        {savingCategory === txn.id && <Loader2 className="inline ml-2 h-3 w-3 animate-spin" />}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setUncategorizedModalOpen(false)}>
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>

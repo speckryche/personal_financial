@@ -39,9 +39,19 @@ export function Sidebar() {
   const [isExpanded, setIsExpanded] = useState(false)
 
   const handleSignOut = async () => {
-    await supabase.auth.signOut()
-    router.push('/login')
-    router.refresh()
+    try {
+      console.log('Signing out...')
+      const { error } = await supabase.auth.signOut()
+      if (error) {
+        console.error('Sign out error:', error)
+      } else {
+        console.log('Sign out successful, redirecting...')
+      }
+      router.push('/login')
+      router.refresh()
+    } catch (err) {
+      console.error('Sign out exception:', err)
+    }
   }
 
   return (

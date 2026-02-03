@@ -30,12 +30,11 @@ export async function POST(request: NextRequest) {
 
     const categories: Category[] = categoriesData || []
 
-    // Fetch transactions - either uncategorized only, or ALL with qb_account
+    // Fetch transactions - either uncategorized only, or ALL with qb_account or split_account
     let query = supabase
       .from('transactions')
-      .select('id, qb_account, qb_transaction_type')
+      .select('id, qb_account, split_account, qb_transaction_type')
       .eq('user_id', user.id)
-      .not('qb_account', 'is', null)
 
     if (!recategorizeAll) {
       // Only uncategorized transactions
@@ -48,7 +47,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to fetch transactions' }, { status: 500 })
     }
 
-    if (!transactions || transactions.length === 0) {
+    // Filter to only transactions with qb_account or split_account
+    const transactionsWithQB = (transactions || []).filter(
+      t => t.qb_account || t.split_account
+    )
+
+    if (transactionsWithQB.length === 0) {
       return NextResponse.json({
         success: true,
         categorized: 0,
@@ -61,12 +65,22 @@ export async function POST(request: NextRequest) {
     // Build updates
     const updates: Array<{ id: string; category_id: string }> = []
 
-    for (const t of transactions) {
-      const categoryId = findCategoryForTransaction(
-        t.qb_account,
+    for (const t of transactionsWithQB) {
+      // Try split_account first (this is the expense/income category from GL)
+      // Then fall back to qb_account
+      let categoryId = findCategoryForTransaction(
+        t.split_account,
         t.qb_transaction_type,
         categories
       )
+
+      if (!categoryId) {
+        categoryId = findCategoryForTransaction(
+          t.qb_account,
+          t.qb_transaction_type,
+          categories
+        )
+      }
 
       if (categoryId) {
         updates.push({ id: t.id, category_id: categoryId })
@@ -104,7 +118,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       categorized: updatedCount,
-      total: transactions.length,
+      total: transactionsWithQB.length,
     })
   } catch (error) {
     console.error('Categorize error:', error)

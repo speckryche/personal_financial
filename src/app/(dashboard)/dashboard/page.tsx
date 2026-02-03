@@ -8,8 +8,9 @@ import { ExpenseDonutChart } from '@/components/charts/expense-donut-chart'
 import { IncomeBarChart } from '@/components/charts/income-bar-chart'
 import { Wallet, TrendingUp, TrendingDown, DollarSign, ArrowRight } from 'lucide-react'
 import Link from 'next/link'
-import type { NetWorthSnapshot, Transaction, Category } from '@/types/database'
-import { startOfMonth, endOfMonth } from 'date-fns'
+import type { Transaction, Category, Account } from '@/types/database'
+import { startOfMonth, endOfMonth, format } from 'date-fns'
+import { getAccountsWithBalances, isLiabilityAccount } from '@/lib/account-balance'
 
 type TransactionWithCategory = Transaction & {
   category: Pick<Category, 'id' | 'name' | 'color' | 'parent_id'> | null
@@ -19,56 +20,98 @@ export default async function DashboardPage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
-  // Get the latest net worth snapshot
-  const { data: latestSnapshotData } = await supabase
-    .from('net_worth_snapshots')
-    .select('*')
-    .order('snapshot_date', { ascending: false })
-    .limit(1)
-    .single()
+  // ========================================
+  // NET WORTH: Auto-calculate from accounts
+  // ========================================
+  const accounts = user ? await getAccountsWithBalances(supabase, user.id) : []
 
-  const latestSnapshot = latestSnapshotData as NetWorthSnapshot | null
+  // Calculate net worth by account type
+  let currentCash = 0
+  let currentInvestments = 0
+  let currentRealEstate = 0
+  let currentCrypto = 0
+  let currentRetirement = 0
+  let currentLiabilities = 0
 
-  // Get net worth history for the chart
-  const { data: netWorthHistory } = await supabase
-    .from('net_worth_snapshots')
-    .select('*')
-    .order('snapshot_date', { ascending: true })
-    .limit(12)
+  for (const account of accounts) {
+    if (!account.is_active) continue
+    const balance = account.current_balance
 
-  // Transform data for chart
-  const history = (netWorthHistory || []) as NetWorthSnapshot[]
-  const chartData = history.map(s => ({
-    date: s.snapshot_date,
-    netWorth: Number(s.net_worth),
-    cash: Number(s.cash),
-    investments: Number(s.investments),
-    realEstate: Number(s.real_estate),
-    crypto: Number(s.crypto),
-    retirement: Number(s.retirement),
-    liabilities: Number(s.liabilities),
-  }))
+    if (isLiabilityAccount(account.account_type)) {
+      // Liabilities (credit cards, loans, mortgage)
+      currentLiabilities += Math.abs(balance)
+    } else {
+      // Assets - categorize by account type
+      switch (account.account_type) {
+        case 'checking':
+        case 'savings':
+          currentCash += balance
+          break
+        case 'investment':
+          // Check if it's crypto based on name
+          if (account.name.toLowerCase().includes('crypto')) {
+            currentCrypto += balance
+          } else {
+            currentInvestments += balance
+          }
+          break
+        case 'retirement':
+          currentRetirement += balance
+          break
+        default:
+          // 'other' type - check name for hints
+          if (account.name.toLowerCase().includes('crypto')) {
+            currentCrypto += balance
+          } else if (account.name.toLowerCase().includes('house') || account.name.toLowerCase().includes('property') || account.name.toLowerCase().includes('real estate')) {
+            currentRealEstate += balance
+          } else {
+            currentInvestments += balance // Default other assets to investments
+          }
+      }
+    }
+  }
 
-  // Calculate current totals from latest snapshot or zero
-  const currentNetWorth = latestSnapshot ? Number(latestSnapshot.net_worth) : 0
-  const currentCash = latestSnapshot ? Number(latestSnapshot.cash) : 0
-  const currentInvestments = latestSnapshot ? Number(latestSnapshot.investments) : 0
-  const currentRealEstate = latestSnapshot ? Number(latestSnapshot.real_estate) : 0
-  const currentCrypto = latestSnapshot ? Number(latestSnapshot.crypto) : 0
-  const currentRetirement = latestSnapshot ? Number(latestSnapshot.retirement) : 0
-  const currentLiabilities = latestSnapshot ? Number(latestSnapshot.liabilities) : 0
+  const totalAssets = currentCash + currentInvestments + currentRealEstate + currentCrypto + currentRetirement
+  const currentNetWorth = totalAssets - currentLiabilities
 
-  // Calculate month-over-month change
-  const previousNetWorth = chartData.length >= 2 ? chartData[chartData.length - 2].netWorth : currentNetWorth
-  const netWorthChange = currentNetWorth - previousNetWorth
-  const netWorthChangePercent = previousNetWorth ? ((netWorthChange / previousNetWorth) * 100) : 0
+  // For now, no historical chart data (would need to track snapshots over time)
+  const chartData: { date: string; netWorth: number; cash: number; investments: number; realEstate: number; crypto: number; retirement: number; liabilities: number }[] = []
+  const netWorthChange = 0
+  const netWorthChangePercent = 0
 
-  // Get real monthly expense and income data
+  // ========================================
+  // MONTHLY DATA: Find most recent month with data
+  // ========================================
   const now = new Date()
-  const monthStart = startOfMonth(now)
-  const monthEnd = endOfMonth(now)
+  let monthStart = startOfMonth(now)
+  let monthEnd = endOfMonth(now)
+  let displayMonth = format(now, 'MMMM yyyy')
 
-  // Get expense transactions for current month
+  // Check if current month has transactions
+  const { count: currentMonthCount } = await supabase
+    .from('transactions')
+    .select('*', { count: 'exact', head: true })
+    .gte('transaction_date', monthStart.toISOString().split('T')[0])
+    .lte('transaction_date', monthEnd.toISOString().split('T')[0])
+
+  // If no transactions this month, find the most recent month with data
+  if (!currentMonthCount || currentMonthCount === 0) {
+    const { data: mostRecentTxn } = await supabase
+      .from('transactions')
+      .select('transaction_date')
+      .order('transaction_date', { ascending: false })
+      .limit(1)
+      .single()
+
+    if (mostRecentTxn) {
+      const recentDate = new Date(mostRecentTxn.transaction_date)
+      monthStart = startOfMonth(recentDate)
+      monthEnd = endOfMonth(recentDate)
+      displayMonth = format(recentDate, 'MMMM yyyy')
+    }
+  }
+
+  // Get expense transactions for the selected month
   const { data: expenseTransactions } = await supabase
     .from('transactions')
     .select(`
@@ -79,7 +122,7 @@ export default async function DashboardPage() {
     .gte('transaction_date', monthStart.toISOString().split('T')[0])
     .lte('transaction_date', monthEnd.toISOString().split('T')[0])
 
-  // Get income transactions for current month
+  // Get income transactions for the selected month
   const { data: incomeTransactions } = await supabase
     .from('transactions')
     .select(`
@@ -142,13 +185,9 @@ export default async function DashboardPage() {
 
   const totalExpenses = expenseData.reduce((sum, e) => sum + e.value, 0)
   const totalIncome = incomeData.reduce((sum, i) => sum + i.amount, 0)
-  const totalAssets = currentCash + currentInvestments + currentRealEstate + currentCrypto + currentRetirement
 
-  // Mini chart data for hero card
-  const miniChartData = chartData.slice(-6).map((d) => ({
-    month: new Date(d.date).toLocaleString('default', { month: 'short' }),
-    value: d.netWorth,
-  }))
+  // Mini chart data for hero card (empty for now since we don't have historical snapshots)
+  const miniChartData: { month: string; value: number }[] = []
 
   return (
     <div className="space-y-8">
@@ -193,7 +232,7 @@ export default async function DashboardPage() {
             title="Monthly Income"
             value={totalIncome}
             icon={DollarSign}
-            description="this month"
+            description={displayMonth}
             iconColor="bg-positive/10 text-positive"
           />
         </div>
@@ -202,7 +241,7 @@ export default async function DashboardPage() {
             title="Monthly Expenses"
             value={totalExpenses}
             icon={Wallet}
-            description="this month"
+            description={displayMonth}
             iconColor="bg-negative/10 text-negative"
           />
         </div>
@@ -244,7 +283,7 @@ export default async function DashboardPage() {
                   View all <ArrowRight className="h-4 w-4" />
                 </Link>
               </div>
-              <CardDescription>This month's spending</CardDescription>
+              <CardDescription>{displayMonth} spending</CardDescription>
             </CardHeader>
             <CardContent>
               {expenseData.length > 0 ? (
@@ -297,7 +336,7 @@ export default async function DashboardPage() {
               <div>
                 <CardTitle>Income Sources</CardTitle>
                 <CardDescription>
-                  Your income streams this month
+                  Your income streams for {displayMonth}
                 </CardDescription>
               </div>
               <Link
@@ -319,8 +358,8 @@ export default async function DashboardPage() {
           </CardContent>
         </Card>
 
-        {/* Quick Actions / Getting Started */}
-        {!latestSnapshot && (
+        {/* Quick Actions / Getting Started - show if no accounts set up */}
+        {accounts.length === 0 && (
           <Card className="animate-fade-in-up stagger-6 opacity-0">
             <CardHeader>
               <CardTitle>Getting Started</CardTitle>

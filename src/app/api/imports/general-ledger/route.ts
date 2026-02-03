@@ -4,7 +4,7 @@ import {
   parseGeneralLedgerExcel,
 } from '@/lib/parsers/quickbooks/general-ledger-parser'
 import { findCategoryForTransaction } from '@/lib/categorization'
-import { findAccountForQBName } from '@/lib/account-balance'
+import { findAccountForQBName, isLiabilityAccount, isAssetAccount } from '@/lib/account-balance'
 import { NextResponse } from 'next/server'
 import type { Category, Account, QBIgnoredAccount } from '@/types/database'
 
@@ -181,16 +181,33 @@ export async function POST(request: Request) {
           linkedViaSplit = true
         }
 
-        // Amount from GL is already signed correctly (debit - credit)
-        // For expenses, we want negative; for income, positive
+        // Amount from GL: positive = debit, negative = credit
         let amount = t.amount
 
         // If linked via split_account, negate the amount (opposite side of entry)
         // GL amount represents debit/credit for qb_account; for split_account it's the opposite
         if (linkedViaSplit) {
           amount = -amount
+        } else if (linkedAccount) {
+          // For balance sheet accounts (assets/liabilities), handle sign correctly
+          if (isAssetAccount(linkedAccount.account_type)) {
+            // Assets: GL debit (positive) = increase, GL credit (negative) = decrease
+            // Keep amount as-is - positive adds to balance, negative subtracts
+            // No change needed
+          } else if (isLiabilityAccount(linkedAccount.account_type)) {
+            // Liabilities: GL debit (positive) = decrease balance, GL credit (negative) = increase balance
+            // Negate: payment (positive in GL) should reduce balance (negative in our system)
+            amount = -amount
+          } else {
+            // Not linked to a balance sheet account - use income/expense logic
+            if (transactionType === 'expense' && amount > 0) {
+              amount = -amount
+            } else if (transactionType === 'income' && amount < 0) {
+              amount = -amount
+            }
+          }
         } else {
-          // Original sign convention logic for qb_account entries
+          // No linked account - use income/expense sign convention
           if (transactionType === 'expense' && amount > 0) {
             amount = -amount
           } else if (transactionType === 'income' && amount < 0) {

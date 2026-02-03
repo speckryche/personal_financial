@@ -12,23 +12,75 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { formatCurrency, formatDate } from '@/lib/utils'
-import type { NetWorthSnapshot, Investment, HomeEntry, Account, AccountBalance } from '@/types/database'
-
-type AccountWithBalances = Account & {
-  account_balances: Pick<AccountBalance, 'balance' | 'balance_date'>[]
-}
+import type { Investment, HomeEntry } from '@/types/database'
+import { getAccountsWithBalances, isLiabilityAccount } from '@/lib/account-balance'
 
 export default async function NetWorthPage() {
   const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
 
-  // Get net worth history
-  const { data: netWorthHistory } = await supabase
-    .from('net_worth_snapshots')
-    .select('*')
-    .order('snapshot_date', { ascending: true })
-    .limit(24)
+  // ========================================
+  // NET WORTH: Auto-calculate from accounts
+  // ========================================
+  const accounts = user ? await getAccountsWithBalances(supabase, user.id) : []
 
-  // Get latest investments
+  // Calculate net worth by account type
+  let currentCash = 0
+  let currentInvestments = 0
+  let currentRealEstate = 0
+  let currentCrypto = 0
+  let currentRetirement = 0
+  let currentLiabilities = 0
+
+  for (const account of accounts) {
+    if (!account.is_active) continue
+    const balance = account.current_balance
+
+    if (isLiabilityAccount(account.account_type)) {
+      currentLiabilities += Math.abs(balance)
+    } else {
+      switch (account.account_type) {
+        case 'checking':
+        case 'savings':
+          currentCash += balance
+          break
+        case 'investment':
+          if (account.name.toLowerCase().includes('crypto')) {
+            currentCrypto += balance
+          } else {
+            currentInvestments += balance
+          }
+          break
+        case 'retirement':
+          currentRetirement += balance
+          break
+        default:
+          if (account.name.toLowerCase().includes('crypto')) {
+            currentCrypto += balance
+          } else if (account.name.toLowerCase().includes('house') || account.name.toLowerCase().includes('property') || account.name.toLowerCase().includes('real estate')) {
+            currentRealEstate += balance
+          } else {
+            currentInvestments += balance
+          }
+      }
+    }
+  }
+
+  const latestData = {
+    date: new Date().toISOString(),
+    netWorth: currentCash + currentInvestments + currentRealEstate + currentCrypto + currentRetirement - currentLiabilities,
+    cash: currentCash,
+    investments: currentInvestments,
+    realEstate: currentRealEstate,
+    crypto: currentCrypto,
+    retirement: currentRetirement,
+    liabilities: currentLiabilities,
+  }
+
+  // For now, no historical chart data
+  const chartData: typeof latestData[] = []
+
+  // Get latest investments (for investment holdings table)
   const { data: investments } = await supabase
     .from('investments')
     .select('*')
@@ -44,42 +96,6 @@ export default async function NetWorthPage() {
     .single()
 
   const homeEntry = homeEntryData as HomeEntry | null
-
-  // Get account balances
-  const { data: accounts } = await supabase
-    .from('accounts')
-    .select(`
-      *,
-      account_balances (
-        balance,
-        balance_date
-      )
-    `)
-    .eq('is_active', true)
-    .order('name')
-
-  const history = (netWorthHistory || []) as NetWorthSnapshot[]
-  const chartData = history.map(s => ({
-    date: s.snapshot_date,
-    netWorth: Number(s.net_worth),
-    cash: Number(s.cash),
-    investments: Number(s.investments),
-    realEstate: Number(s.real_estate),
-    crypto: Number(s.crypto),
-    retirement: Number(s.retirement),
-    liabilities: Number(s.liabilities),
-  }))
-
-  const latestData = chartData[chartData.length - 1] || {
-    date: new Date().toISOString(),
-    netWorth: 0,
-    cash: 0,
-    investments: 0,
-    realEstate: 0,
-    crypto: 0,
-    retirement: 0,
-    liabilities: 0,
-  }
 
   // Calculate totals from investments
   const investmentList = (investments || []) as Investment[]
@@ -124,7 +140,7 @@ export default async function NetWorthPage() {
                 <NetWorthChart data={chartData} />
               ) : (
                 <div className="flex items-center justify-center h-[350px] text-muted-foreground text-sm">
-                  No net worth history yet. Create a snapshot in Settings.
+                  Historical net worth tracking coming soon. Current values are shown above.
                 </div>
               )}
             </CardContent>
@@ -142,7 +158,7 @@ export default async function NetWorthPage() {
                 <NetWorthChart data={chartData} stacked />
               ) : (
                 <div className="flex items-center justify-center h-[350px] text-muted-foreground text-sm">
-                  No net worth history yet. Create a snapshot in Settings.
+                  Historical asset breakdown coming soon. Current values are shown above.
                 </div>
               )}
             </CardContent>
@@ -247,35 +263,38 @@ export default async function NetWorthPage() {
                 <TableRow>
                   <TableHead>Account</TableHead>
                   <TableHead>Type</TableHead>
-                  <TableHead>Bucket</TableHead>
                   <TableHead className="text-right">Balance</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {(accounts as AccountWithBalances[] || []).length > 0 ? (
-                  (accounts as AccountWithBalances[]).map((account) => {
-                    const latestBalance = account.account_balances?.[0]?.balance
-                    return (
-                      <TableRow key={account.id}>
-                        <TableCell className="font-medium">{account.name}</TableCell>
-                        <TableCell className="capitalize">
-                          {account.account_type.replace('_', ' ')}
-                        </TableCell>
-                        <TableCell className="capitalize">
-                          {account.net_worth_bucket.replace('_', ' ')}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {latestBalance !== undefined
-                            ? formatCurrency(Number(latestBalance))
-                            : '-'}
-                        </TableCell>
-                      </TableRow>
-                    )
-                  })
+                {accounts.length > 0 ? (
+                  accounts
+                    .filter(a => a.is_active)
+                    .sort((a, b) => {
+                      // Sort: assets first (positive balances), then liabilities
+                      const aIsLiability = isLiabilityAccount(a.account_type)
+                      const bIsLiability = isLiabilityAccount(b.account_type)
+                      if (aIsLiability !== bIsLiability) return aIsLiability ? 1 : -1
+                      return Math.abs(b.current_balance) - Math.abs(a.current_balance)
+                    })
+                    .map((account) => {
+                      const isLiability = isLiabilityAccount(account.account_type)
+                      return (
+                        <TableRow key={account.id}>
+                          <TableCell className="font-medium">{account.name}</TableCell>
+                          <TableCell className="capitalize">
+                            {account.account_type.replace('_', ' ')}
+                          </TableCell>
+                          <TableCell className={`text-right font-medium ${isLiability ? 'text-red-500' : 'text-green-600'}`}>
+                            {isLiability ? '-' : ''}{formatCurrency(Math.abs(account.current_balance))}
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={4} className="text-center text-muted-foreground">
-                      No accounts created yet. Go to Settings to add accounts.
+                    <TableCell colSpan={3} className="text-center text-muted-foreground">
+                      No accounts created yet. Go to Accounts to add accounts.
                     </TableCell>
                   </TableRow>
                 )}
