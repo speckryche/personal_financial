@@ -77,11 +77,6 @@ export interface Transaction {
   amount: number
   transaction_type: TransactionType
   memo: string | null
-  qb_transaction_type: string | null
-  qb_num: string | null
-  qb_name: string | null
-  qb_class: string | null
-  qb_split: string | null
   qb_account: string | null // "Account full name" column - the GL section header
   split_account: string | null // The counter-entry account (e.g., checking account for expenses)
   is_reconciled: boolean
@@ -207,6 +202,14 @@ export interface QBIgnoredAccount {
   id: string
   user_id: string
   qb_account_name: string
+  created_at: string
+}
+
+export interface QBAccountClassification {
+  id: string
+  user_id: string
+  qb_account_name: string
+  classification: 'income' | 'expense'
   created_at: string
 }
 

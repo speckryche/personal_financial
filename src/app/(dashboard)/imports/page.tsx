@@ -8,7 +8,6 @@ import { FileUpload } from '@/components/imports/file-upload'
 import { ImportPreview } from '@/components/imports/import-preview'
 import { ImportHistory } from '@/components/imports/import-history'
 import { useToast } from '@/components/ui/use-toast'
-import { parseQuickBooksTransactions, parseQuickBooksExcel } from '@/lib/parsers/quickbooks/transaction-parser'
 import { parseRaymondJamesCSV } from '@/lib/parsers/quickbooks/investment-parser'
 import {
   parseGeneralLedgerCSV,
@@ -17,12 +16,14 @@ import {
   type DiscoveredAccount,
 } from '@/lib/parsers/quickbooks/general-ledger-parser'
 import { createClient } from '@/lib/supabase/client'
-import type { ParsedTransaction } from '@/lib/parsers/quickbooks/transaction-parser'
 import type { ParsedInvestment } from '@/lib/parsers/quickbooks/investment-parser'
-import type { Category, Account, AccountType } from '@/types/database'
-import { Check, AlertTriangle, Loader2, Building2, ChevronDown, ChevronUp, X } from 'lucide-react'
+import type { Account, AccountType } from '@/types/database'
+import { Check, AlertTriangle, Loader2, ChevronDown, ChevronUp } from 'lucide-react'
+import {
+  PotentialDuplicatesModal,
+  type PotentialDuplicate,
+} from '@/components/imports/potential-duplicates-modal'
 import { Badge } from '@/components/ui/badge'
-import { Checkbox } from '@/components/ui/checkbox'
 import {
   Select,
   SelectContent,
@@ -33,7 +34,6 @@ import {
 import {
   getAllQBMappings,
   classifyDiscoveredAccounts,
-  suggestMappingType,
   type MappingType,
   type ClassifiedAccount,
   type AllMappingsResult,
@@ -47,7 +47,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 
-type ImportType = 'quickbooks' | 'general-ledger' | 'investments'
+type ImportType = 'general-ledger' | 'investments'
 
 interface CategoryInfo {
   id: string
@@ -57,9 +57,7 @@ interface CategoryInfo {
 
 export default function ImportsPage() {
   const supabase = createClient()
-  const [activeTab, setActiveTab] = useState<ImportType>('quickbooks')
-  const [typeMappings, setTypeMappings] = useState<Map<string, 'income' | 'expense'>>(new Map())
-  const [pendingTypeMappings, setPendingTypeMappings] = useState<Record<string, 'income' | 'expense'>>({})
+  const [activeTab, setActiveTab] = useState<ImportType>('general-ledger')
 
   // Category mapping state
   const [categories, setCategories] = useState<CategoryInfo[]>([])
@@ -97,21 +95,8 @@ export default function ImportsPage() {
   }, [])
 
   useEffect(() => {
-    loadTypeMappings()
     loadCategories()
   }, [])
-
-  const loadTypeMappings = async () => {
-    const { data } = await supabase
-      .from('transaction_type_mappings')
-      .select('qb_transaction_type, mapped_type')
-
-    const mappings = new Map<string, 'income' | 'expense'>()
-    for (const m of data || []) {
-      mappings.set(m.qb_transaction_type.toLowerCase(), m.mapped_type as 'income' | 'expense')
-    }
-    setTypeMappings(mappings)
-  }
 
   const loadCategories = async () => {
     const { data } = await supabase
@@ -138,13 +123,6 @@ export default function ImportsPage() {
       }
       setCategoryMappings(mappings)
     }
-  }
-
-  const handleTypeMappingChange = (qbType: string, mappedType: 'income' | 'expense') => {
-    setPendingTypeMappings(prev => ({
-      ...prev,
-      [qbType.toLowerCase()]: mappedType
-    }))
   }
 
   const handleCategoryMappingChange = (qbAccount: string, categoryId: string | null) => {
@@ -186,35 +164,6 @@ export default function ImportsPage() {
     })
 
     return data?.id || null
-  }
-
-  const savePendingTypeMappings = async () => {
-    if (Object.keys(pendingTypeMappings).length === 0) return true
-
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return false
-
-    for (const [qbType, mappedType] of Object.entries(pendingTypeMappings)) {
-      const { error } = await supabase
-        .from('transaction_type_mappings')
-        .upsert(
-          {
-            user_id: user.id,
-            qb_transaction_type: qbType,
-            mapped_type: mappedType,
-          },
-          { onConflict: 'user_id,qb_transaction_type' }
-        )
-
-      if (error) {
-        console.error('Error saving type mapping:', error)
-        return false
-      }
-    }
-
-    // Reload mappings after saving
-    await loadTypeMappings()
-    return true
   }
 
   const savePendingCategoryMappings = async () => {
@@ -283,7 +232,6 @@ export default function ImportsPage() {
     await loadCategories()
     return true
   }
-  const [parsedTransactions, setParsedTransactions] = useState<ParsedTransaction[]>([])
   const [parsedInvestments, setParsedInvestments] = useState<ParsedInvestment[]>([])
   const [parsedGLTransactions, setParsedGLTransactions] = useState<ParsedGLTransaction[]>([])
   const [discoveredAccounts, setDiscoveredAccounts] = useState<DiscoveredAccount[]>([])
@@ -313,8 +261,12 @@ export default function ImportsPage() {
     duplicatesSkipped: number
     ignoredFromSkippedAccounts?: number
     errors: string[]
+    newUnmappedAccounts?: string[]
+    uncategorizedCount?: number
   } | null>(null)
   const [importHistoryKey, setImportHistoryKey] = useState(0)
+  const [potentialDuplicates, setPotentialDuplicates] = useState<PotentialDuplicate[]>([])
+  const [showDuplicatesModal, setShowDuplicatesModal] = useState(false)
   const { toast } = useToast()
 
   // Load existing accounts for GL import
@@ -367,33 +319,7 @@ export default function ImportsPage() {
     const fileName = file.name.toLowerCase()
     const isExcel = fileName.endsWith('.xls') || fileName.endsWith('.xlsx')
 
-    if (activeTab === 'quickbooks') {
-      let result
-
-      if (isExcel) {
-        // Parse Excel file
-        const buffer = await file.arrayBuffer()
-        result = parseQuickBooksExcel(buffer)
-      } else {
-        // Parse CSV file
-        const content = await file.text()
-        result = await parseQuickBooksTransactions(content)
-      }
-
-      setParsedTransactions(result.transactions)
-      setParsedInvestments([])
-      setParsedGLTransactions([])
-      setDiscoveredAccounts([])
-      setParseErrors(result.errors)
-
-      if (result.transactions.length === 0) {
-        toast({
-          title: 'No transactions found',
-          description: 'The file does not contain any valid transactions. Check that your file has Date and Amount columns.',
-          variant: 'destructive',
-        })
-      }
-    } else if (activeTab === 'general-ledger') {
+    if (activeTab === 'general-ledger') {
       let result
 
       if (isExcel) {
@@ -406,7 +332,6 @@ export default function ImportsPage() {
 
       setParsedGLTransactions(result.transactions)
       setDiscoveredAccounts(result.discoveredAccounts)
-      setParsedTransactions([])
       setParsedInvestments([])
       setParseErrors(result.errors)
       setPendingGLMappings({})
@@ -437,7 +362,6 @@ export default function ImportsPage() {
       const content = await file.text()
       const result = await parseRaymondJamesCSV(content)
       setParsedInvestments(result.investments)
-      setParsedTransactions([])
       setParsedGLTransactions([])
       setDiscoveredAccounts([])
       setParseErrors(result.errors)
@@ -642,10 +566,22 @@ export default function ImportsPage() {
             console.log(`Skipping ${qbAccountName} - no targetId or newAccountName provided`)
           }
         } else if (mapping.mappingType === 'income' || mapping.mappingType === 'expense') {
-          // No action needed during import for income/expense accounts
-          // User will map these to categories later in Settings → QB Categories
-          // The transactions will still import and can be categorized via the existing workflow
-          continue
+          // Save the classification so it's remembered for future imports
+          console.log(`Saving ${mapping.mappingType} classification for: ${qbAccountName}`)
+          const { error } = await supabase
+            .from('qb_account_classifications')
+            .upsert(
+              {
+                user_id: user.id,
+                qb_account_name: qbAccountName,
+                classification: mapping.mappingType,
+              },
+              { onConflict: 'user_id,qb_account_name' }
+            )
+          if (error) {
+            console.error('Error saving classification:', error)
+            return false
+          }
         }
       }
 
@@ -666,18 +602,6 @@ export default function ImportsPage() {
     if (!selectedFile) return
 
     setIsUploading(true)
-
-    // Save any pending type mappings first
-    const typeMappingsSaved = await savePendingTypeMappings()
-    if (!typeMappingsSaved) {
-      toast({
-        title: 'Error saving type mappings',
-        description: 'Failed to save transaction type mappings. Please try again.',
-        variant: 'destructive',
-      })
-      setIsUploading(false)
-      return
-    }
 
     // Save any pending category mappings
     const categoryMappingsSaved = await savePendingCategoryMappings()
@@ -709,14 +633,9 @@ export default function ImportsPage() {
     formData.append('file', selectedFile)
 
     try {
-      let endpoint: string
-      if (activeTab === 'quickbooks') {
-        endpoint = '/api/imports/quickbooks'
-      } else if (activeTab === 'general-ledger') {
-        endpoint = '/api/imports/general-ledger'
-      } else {
-        endpoint = '/api/imports/investments'
-      }
+      const endpoint = activeTab === 'general-ledger'
+        ? '/api/imports/general-ledger'
+        : '/api/imports/investments'
 
       const response = await fetch(endpoint, {
         method: 'POST',
@@ -735,21 +654,44 @@ export default function ImportsPage() {
         duplicatesSkipped: result.duplicatesSkipped || 0,
         ignoredFromSkippedAccounts: result.ignoredFromSkippedAccounts || 0,
         errors: result.errors || [],
+        newUnmappedAccounts: result.newUnmappedAccounts || [],
+        uncategorizedCount: result.uncategorizedCount || 0,
       })
 
       // Clear pending mappings after successful import
-      setPendingTypeMappings({})
       setPendingCategoryMappings({})
       // Refresh the import history
       refreshImportHistory()
       console.log('Import result:', result)
-      const duplicateMsg = result.duplicatesSkipped > 0
-        ? ` (${result.duplicatesSkipped} duplicate${result.duplicatesSkipped === 1 ? '' : 's'} skipped)`
-        : ''
-      toast({
-        title: 'Import successful',
-        description: `Imported ${result.imported} transactions${duplicateMsg}.`,
-      })
+
+      // Check for potential duplicates and show modal if any
+      if (result.potentialDuplicates && result.potentialDuplicates.length > 0) {
+        setPotentialDuplicates(result.potentialDuplicates)
+        setShowDuplicatesModal(true)
+        toast({
+          title: 'Import successful - Review needed',
+          description: `Imported ${result.imported} transactions. ${result.potentialDuplicates.length} potential duplicate(s) found that need your review.`,
+          duration: 10000,
+        })
+      } else {
+        const duplicateMsg = result.duplicatesSkipped > 0
+          ? ` (${result.duplicatesSkipped} duplicate${result.duplicatesSkipped === 1 ? '' : 's'} skipped)`
+          : ''
+
+        // Show toast with unmapped accounts info if any
+        if (result.newUnmappedAccounts && result.newUnmappedAccounts.length > 0) {
+          toast({
+            title: 'Import successful - Unmapped accounts detected',
+            description: `Imported ${result.imported} transactions${duplicateMsg}. ${result.newUnmappedAccounts.length} QB account(s) need category mappings. Go to Settings → QB Categories to configure.`,
+            duration: 10000,
+          })
+        } else {
+          toast({
+            title: 'Import successful',
+            description: `Imported ${result.imported} transactions${duplicateMsg}.`,
+          })
+        }
+      }
     } catch (error) {
       // Ignore MetaMask and other wallet extension errors
       const errorMessage = error instanceof Error ? error.message : String(error)
@@ -782,7 +724,6 @@ export default function ImportsPage() {
 
   const resetState = () => {
     setSelectedFile(null)
-    setParsedTransactions([])
     setParsedInvestments([])
     setParsedGLTransactions([])
     setDiscoveredAccounts([])
@@ -792,13 +733,60 @@ export default function ImportsPage() {
     setShowMappedAccounts(false)
     setParseErrors([])
     setUploadResult(null)
-    setPendingTypeMappings({})
     setPendingCategoryMappings({})
+    setPotentialDuplicates([])
   }
 
   const handleTabChange = (value: string) => {
     setActiveTab(value as ImportType)
     resetState()
+  }
+
+  // Handle resolving potential duplicates
+  const handleResolveDuplicates = async (decisions: Map<string, 'keep_new' | 'keep_existing' | 'keep_both'>) => {
+    const transactionsToDelete: string[] = []
+
+    for (const dup of potentialDuplicates) {
+      const decision = decisions.get(dup.newTransaction.id)
+      if (!decision) continue
+
+      if (decision === 'keep_new') {
+        // Delete the existing transaction
+        transactionsToDelete.push(dup.existingTransaction.id)
+      } else if (decision === 'keep_existing') {
+        // Delete the newly imported transaction
+        transactionsToDelete.push(dup.newTransaction.id)
+      }
+      // 'keep_both' - don't delete anything
+    }
+
+    if (transactionsToDelete.length > 0) {
+      const { error } = await supabase
+        .from('transactions')
+        .delete()
+        .in('id', transactionsToDelete)
+
+      if (error) {
+        toast({
+          title: 'Error resolving duplicates',
+          description: error.message,
+          variant: 'destructive',
+        })
+        return
+      }
+    }
+
+    const keptNew = Array.from(decisions.values()).filter(d => d === 'keep_new').length
+    const keptExisting = Array.from(decisions.values()).filter(d => d === 'keep_existing').length
+    const keptBoth = Array.from(decisions.values()).filter(d => d === 'keep_both').length
+
+    toast({
+      title: 'Duplicates resolved',
+      description: `Kept ${keptNew} new, ${keptExisting} existing, ${keptBoth} both.`,
+    })
+
+    setPotentialDuplicates([])
+    refreshImportHistory()
   }
 
   return (
@@ -812,121 +800,9 @@ export default function ImportsPage() {
 
       <Tabs value={activeTab} onValueChange={handleTabChange}>
         <TabsList>
-          <TabsTrigger value="quickbooks">QuickBooks Transactions</TabsTrigger>
           <TabsTrigger value="general-ledger">General Ledger</TabsTrigger>
           <TabsTrigger value="investments">Raymond James Investments</TabsTrigger>
         </TabsList>
-
-        <TabsContent value="quickbooks" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Import QuickBooks Transactions</CardTitle>
-              <CardDescription>
-                Upload a Transaction Detail report exported from QuickBooks (CSV or Excel)
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <FileUpload
-                onFileSelect={handleFileSelect}
-                disabled={isUploading}
-                isUploading={isUploading}
-              />
-
-              {parseErrors.length > 0 && (
-                <div className="rounded-lg border border-amber-500/50 bg-amber-50 p-4 dark:bg-amber-950/20">
-                  <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
-                    <AlertTriangle className="h-4 w-4" />
-                    <span className="font-medium">Parse warnings</span>
-                  </div>
-                  <ul className="mt-2 list-disc list-inside text-sm text-amber-600 dark:text-amber-300">
-                    {parseErrors.slice(0, 5).map((error, i) => (
-                      <li key={i}>{error}</li>
-                    ))}
-                    {parseErrors.length > 5 && (
-                      <li>...and {parseErrors.length - 5} more warnings</li>
-                    )}
-                  </ul>
-                </div>
-              )}
-
-              {parsedTransactions.length > 0 && (
-                <>
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm text-muted-foreground">
-                      Preview of {parsedTransactions.length} transactions to import
-                    </p>
-                    <Button onClick={handleImport} disabled={isUploading}>
-                      {isUploading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                      Import {parsedTransactions.length} Transactions
-                    </Button>
-                  </div>
-                  <ImportPreview
-                    type="transactions"
-                    data={parsedTransactions}
-                    typeMappings={typeMappings}
-                    pendingTypeMappings={pendingTypeMappings}
-                    onTypeMappingChange={handleTypeMappingChange}
-                    categories={categories}
-                    categoryMappings={categoryMappings}
-                    pendingCategoryMappings={pendingCategoryMappings}
-                    onCategoryMappingChange={handleCategoryMappingChange}
-                    onCreateCategory={handleCreateCategory}
-                  />
-                </>
-              )}
-
-              {uploadResult && (
-                <div
-                  className={`rounded-lg border p-4 ${
-                    uploadResult.success
-                      ? 'border-green-500/50 bg-green-50 dark:bg-green-950/20'
-                      : 'border-red-500/50 bg-red-50 dark:bg-red-950/20'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    {uploadResult.success ? (
-                      <Check className="h-5 w-5 text-green-600" />
-                    ) : (
-                      <AlertTriangle className="h-5 w-5 text-red-600" />
-                    )}
-                    <span className="font-medium">
-                      {uploadResult.success
-                        ? `Successfully imported ${uploadResult.imported} transactions${
-                            uploadResult.duplicatesSkipped > 0
-                              ? ` (${uploadResult.duplicatesSkipped} duplicate${uploadResult.duplicatesSkipped === 1 ? '' : 's'} skipped)`
-                              : ''
-                          }`
-                        : 'Import failed'}
-                    </span>
-                  </div>
-                  {uploadResult.errors.length > 0 && (
-                    <ul className="mt-2 list-disc list-inside text-sm opacity-80">
-                      {uploadResult.errors.map((error, i) => (
-                        <li key={i}>{error}</li>
-                      ))}
-                    </ul>
-                  )}
-                  {uploadResult.success && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="mt-3"
-                      onClick={resetState}
-                    >
-                      Import Another File
-                    </Button>
-                  )}
-                </div>
-              )}
-
-              <ImportHistory
-                key={importHistoryKey}
-                fileType="quickbooks_transactions"
-                onImportDeleted={refreshImportHistory}
-              />
-            </CardContent>
-          </Card>
-        </TabsContent>
 
         {/* General Ledger Tab */}
         <TabsContent value="general-ledger" className="space-y-6">
@@ -1426,6 +1302,14 @@ export default function ImportsPage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Potential Duplicates Review Modal */}
+      <PotentialDuplicatesModal
+        open={showDuplicatesModal}
+        onOpenChange={setShowDuplicatesModal}
+        duplicates={potentialDuplicates}
+        onResolve={handleResolveDuplicates}
+      />
     </div>
   )
 }

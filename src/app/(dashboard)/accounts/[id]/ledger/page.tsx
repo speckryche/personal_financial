@@ -225,10 +225,10 @@ export default function AccountLedgerPage({ params }: { params: { id: string } }
                     {formatDate(txn.transaction_date)}
                   </TableCell>
                   <TableCell className="max-w-[200px] truncate">
-                    {txn.description || txn.memo || txn.qb_name || 'No description'}
+                    {txn.description || txn.memo || 'No description'}
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">
-                    {txn.qb_transaction_type || '—'}
+                    {txn.split_account || '—'}
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground max-w-[150px] truncate">
                     {txn.qb_account || '—'}

@@ -35,6 +35,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Plus, Trash2, Loader2, ChevronRight, AlertTriangle, Pencil, ChevronDown, Eye, EyeOff } from 'lucide-react'
 import { formatCurrency } from '@/lib/utils'
 import { CategoryMapping } from '@/components/settings/category-mapping'
+import { DuplicateCleanup } from '@/components/settings/duplicate-cleanup'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -100,11 +101,18 @@ export default function SettingsPage() {
     parent_id: null as string | null,
   })
 
-  // Delete confirmation state
+  // Delete confirmation state for categories
   const [deleteConfirm, setDeleteConfirm] = useState<{
     id: string
     name: string
     childrenCount: number
+  } | null>(null)
+
+  // Delete confirmation state for accounts
+  const [deleteAccountConfirm, setDeleteAccountConfirm] = useState<{
+    id: string
+    name: string
+    transactionCount: number
   } | null>(null)
 
   // Edit category state
@@ -262,6 +270,14 @@ export default function SettingsPage() {
     }
   }
 
+  const handleDeleteAccountClick = (account: AccountWithBalance) => {
+    setDeleteAccountConfirm({
+      id: account.id,
+      name: account.name,
+      transactionCount: account.transaction_count,
+    })
+  }
+
   const handleDeleteAccount = async (id: string) => {
     const { error } = await supabase.from('accounts').delete().eq('id', id)
     if (error) {
@@ -270,6 +286,7 @@ export default function SettingsPage() {
       toast({ title: 'Account deleted' })
       loadData()
     }
+    setDeleteAccountConfirm(null)
   }
 
   const handleAddCategory = async () => {
@@ -436,6 +453,7 @@ export default function SettingsPage() {
           <TabsTrigger value="accounts">Accounts</TabsTrigger>
           <TabsTrigger value="categories">Categories</TabsTrigger>
           <TabsTrigger value="qb-mappings">QB Categories</TabsTrigger>
+          <TabsTrigger value="duplicates">Duplicates</TabsTrigger>
         </TabsList>
 
         {/* Accounts Tab */}
@@ -636,7 +654,8 @@ export default function SettingsPage() {
                                 <Button
                                   variant="ghost"
                                   size="icon"
-                                  onClick={() => handleDeleteAccount(account.id)}
+                                  onClick={() => handleDeleteAccountClick(account)}
+                                  title="Delete account"
                                 >
                                   <Trash2 className="h-4 w-4 text-destructive" />
                                 </Button>
@@ -713,7 +732,8 @@ export default function SettingsPage() {
                                 <Button
                                   variant="ghost"
                                   size="icon"
-                                  onClick={() => handleDeleteAccount(account.id)}
+                                  onClick={() => handleDeleteAccountClick(account)}
+                                  title="Delete account"
                                 >
                                   <Trash2 className="h-4 w-4 text-destructive" />
                                 </Button>
@@ -769,7 +789,8 @@ export default function SettingsPage() {
                                   <Button
                                     variant="ghost"
                                     size="icon"
-                                    onClick={() => handleDeleteAccount(account.id)}
+                                    onClick={() => handleDeleteAccountClick(account)}
+                                    title="Delete account"
                                   >
                                     <Trash2 className="h-4 w-4 text-destructive" />
                                   </Button>
@@ -905,6 +926,40 @@ export default function SettingsPage() {
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
+
+              {/* Delete Account Confirmation Dialog */}
+              <AlertDialog open={!!deleteAccountConfirm} onOpenChange={(open) => !open && setDeleteAccountConfirm(null)}>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle className="flex items-center gap-2">
+                      <AlertTriangle className="h-5 w-5 text-amber-500" />
+                      Delete Account?
+                    </AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Are you sure you want to delete <strong>{deleteAccountConfirm?.name}</strong>?
+                      {deleteAccountConfirm?.transactionCount ? (
+                        <span className="block mt-2 text-amber-600">
+                          This account has {deleteAccountConfirm.transactionCount} transaction{deleteAccountConfirm.transactionCount === 1 ? '' : 's'} linked to it.
+                          The transactions will remain but will no longer be linked to an account.
+                        </span>
+                      ) : (
+                        <span className="block mt-2">
+                          This action cannot be undone.
+                        </span>
+                      )}
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={() => deleteAccountConfirm && handleDeleteAccount(deleteAccountConfirm.id)}
+                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    >
+                      Delete Account
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             </CardContent>
           </Card>
         </TabsContent>
@@ -1233,6 +1288,23 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent>
               <CategoryMapping categories={categories} onCategoriesUpdate={loadData} />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Duplicate Cleanup Tab */}
+        <TabsContent value="duplicates" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <div>
+                <CardTitle>Duplicate Cleanup</CardTitle>
+                <CardDescription>
+                  Find and remove duplicate transactions that may have been imported multiple times
+                </CardDescription>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <DuplicateCleanup />
             </CardContent>
           </Card>
         </TabsContent>

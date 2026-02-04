@@ -8,9 +8,15 @@ import { findAccountForQBName, isLiabilityAccount, isAssetAccount } from '@/lib/
 import { NextResponse } from 'next/server'
 import type { Category, Account, QBIgnoredAccount } from '@/types/database'
 
-// Build a unique key for duplicate detection
+// Build a unique key for exact duplicate detection
 function buildTransactionKey(date: string, amount: number, description: string, account: string | null): string {
   return `${date}|${Math.abs(amount).toFixed(2)}|${(description || '').toLowerCase().trim()}|${(account || '').toLowerCase().trim()}`
+}
+
+// Build a partial key for potential duplicate detection (without description)
+// Used to catch cases where description was edited in QB but it's the same transaction
+function buildPartialKey(date: string, amount: number, account: string | null): string {
+  return `${date}|${Math.abs(amount).toFixed(2)}|${(account || '').toLowerCase().trim()}`
 }
 
 export async function POST(request: Request) {
@@ -58,21 +64,34 @@ export async function POST(request: Request) {
     const maxDate = dates.length > 0 ? dates.reduce((a, b) => a > b ? a : b) : null
 
     // Query existing transactions for duplicate detection
+    // We need both exact keys (for auto-skip) and partial keys (for potential duplicate flagging)
     let existingKeys = new Set<string>()
+    let existingPartialKeys = new Map<string, { id: string; date: string; amount: number; description: string; qb_account: string | null }>()
     if (minDate && maxDate) {
       const { data: existingTransactions } = await supabase
         .from('transactions')
-        .select('transaction_date, amount, description, qb_account')
+        .select('id, transaction_date, amount, description, qb_account')
         .eq('user_id', user.id)
         .gte('transaction_date', minDate)
         .lte('transaction_date', maxDate)
 
       if (existingTransactions) {
-        existingKeys = new Set(
-          existingTransactions.map(t =>
-            buildTransactionKey(t.transaction_date, Number(t.amount), t.description || '', t.qb_account)
-          )
-        )
+        for (const t of existingTransactions) {
+          const exactKey = buildTransactionKey(t.transaction_date, Number(t.amount), t.description || '', t.qb_account)
+          existingKeys.add(exactKey)
+
+          const partialKey = buildPartialKey(t.transaction_date, Number(t.amount), t.qb_account)
+          // Store the first existing transaction for each partial key (for potential duplicate detection)
+          if (!existingPartialKeys.has(partialKey)) {
+            existingPartialKeys.set(partialKey, {
+              id: t.id,
+              date: t.transaction_date,
+              amount: Number(t.amount),
+              description: t.description || '',
+              qb_account: t.qb_account
+            })
+          }
+        }
       }
     }
 
@@ -139,8 +158,14 @@ export async function POST(request: Request) {
     const importBatchId = (importBatch as { id: string }).id
 
     // Filter out duplicates and ignored accounts, prepare transactions for insert
+    // Also track potential duplicates (same date/amount/account but different description)
     let duplicatesSkipped = 0
     let ignoredFromSkippedAccounts = 0
+
+    // Track potential duplicates: map from partial key to existing transaction info
+    type ExistingTxInfo = { id: string; date: string; amount: number; description: string; qb_account: string | null }
+    const potentialDuplicateMatches = new Map<string, ExistingTxInfo>()
+
     const transactionsToInsert = result.transactions
       .filter((t) => {
         // Skip transactions from ignored accounts
@@ -148,11 +173,19 @@ export async function POST(request: Request) {
           ignoredFromSkippedAccounts++
           return false
         }
-        // Skip duplicates
-        const key = buildTransactionKey(t.transaction_date, t.amount, t.description, t.qb_account)
-        if (existingKeys.has(key)) {
+        // Skip exact duplicates
+        const exactKey = buildTransactionKey(t.transaction_date, t.amount, t.description, t.qb_account)
+        if (existingKeys.has(exactKey)) {
           duplicatesSkipped++
           return false
+        }
+        // Check for potential duplicates (same date/amount/account but different description)
+        const partialKey = buildPartialKey(t.transaction_date, t.amount, t.qb_account)
+        const existingWithPartialMatch = existingPartialKeys.get(partialKey)
+        if (existingWithPartialMatch) {
+          // This is a potential duplicate - we'll insert it but track it for user review
+          // Store the match keyed by the exact key of the NEW transaction (so we can find it after insert)
+          potentialDuplicateMatches.set(exactKey, existingWithPartialMatch)
         }
         return true
       })
@@ -162,13 +195,21 @@ export async function POST(request: Request) {
         const mappedType = typeMappings.get(qbType)
         const transactionType = mappedType || t.transaction_type
 
-        // Auto-categorize based on split_account (the QB category) first, then qb_account
+        // Auto-categorize: try split_account first (the QB category), then qb_account
         // In GL format, split_account contains the category (e.g., "Groceries", "Dining")
-        const categoryId = findCategoryForTransaction(
-          t.split_account || t.qb_account,
+        // This matches the logic in /api/transactions/categorize
+        let categoryId = findCategoryForTransaction(
+          t.split_account,
           t.qb_transaction_type,
           categories
         )
+        if (!categoryId) {
+          categoryId = findCategoryForTransaction(
+            t.qb_account,
+            t.qb_transaction_type,
+            categories
+          )
+        }
 
         // Try to link to account via qb_account first, then split_account
         let linkedAccount = findAccountForQBName(t.qb_account, accounts)
@@ -215,6 +256,14 @@ export async function POST(request: Request) {
           }
         }
 
+        // For transactions linked to balance sheet accounts (assets/liabilities),
+        // set transaction_type to 'transfer' - these are balance movements, not income/expense.
+        // Only the category side of double-entry should be income/expense.
+        let finalTransactionType = transactionType
+        if (linkedAccount && (isAssetAccount(linkedAccount.account_type) || isLiabilityAccount(linkedAccount.account_type))) {
+          finalTransactionType = 'transfer'
+        }
+
         return {
           user_id: user.id,
           account_id: linkedAccount?.id || null,
@@ -222,7 +271,7 @@ export async function POST(request: Request) {
           transaction_date: t.transaction_date,
           description: t.description,
           amount,
-          transaction_type: transactionType,
+          transaction_type: finalTransactionType,
           category_id: categoryId,
           memo: t.memo,
           qb_transaction_type: t.qb_transaction_type,
@@ -233,15 +282,23 @@ export async function POST(request: Request) {
         }
       })
 
-    // Insert in batches of 100
+    // Insert in batches of 100, returning IDs to track potential duplicates
     const chunkSize = 100
     let insertedCount = 0
+    const insertedTransactions: Array<{
+      id: string
+      transaction_date: string
+      amount: number
+      description: string
+      qb_account: string | null
+    }> = []
 
     for (let i = 0; i < transactionsToInsert.length; i += chunkSize) {
       const chunk = transactionsToInsert.slice(i, i + chunkSize)
-      const { error: insertError } = await supabase
+      const { data: insertedData, error: insertError } = await supabase
         .from('transactions')
         .insert(chunk)
+        .select('id, transaction_date, amount, description, qb_account')
 
       if (insertError) {
         console.error('Insert error:', insertError)
@@ -257,7 +314,40 @@ export async function POST(request: Request) {
         )
       }
 
+      if (insertedData) {
+        insertedTransactions.push(...insertedData)
+      }
       insertedCount += chunk.length
+    }
+
+    // Build potential duplicates list by matching inserted transactions to their existing matches
+    const potentialDuplicates: Array<{
+      newTransaction: { id: string; date: string; amount: number; description: string; qb_account: string | null }
+      existingTransaction: { id: string; date: string; amount: number; description: string; qb_account: string | null }
+    }> = []
+
+    if (potentialDuplicateMatches.size > 0) {
+      for (const inserted of insertedTransactions) {
+        const exactKey = buildTransactionKey(
+          inserted.transaction_date,
+          Number(inserted.amount),
+          inserted.description || '',
+          inserted.qb_account
+        )
+        const existingMatch = potentialDuplicateMatches.get(exactKey)
+        if (existingMatch) {
+          potentialDuplicates.push({
+            newTransaction: {
+              id: inserted.id,
+              date: inserted.transaction_date,
+              amount: Number(inserted.amount),
+              description: inserted.description || '',
+              qb_account: inserted.qb_account
+            },
+            existingTransaction: existingMatch
+          })
+        }
+      }
     }
 
     // Update batch status to completed
@@ -271,6 +361,7 @@ export async function POST(request: Request) {
           skippedCount: result.skippedCount,
           duplicatesSkipped,
           ignoredFromSkippedAccounts,
+          potentialDuplicatesCount: potentialDuplicates.length,
           discoveredAccounts: result.discoveredAccounts.length,
           errors: result.errors,
         },
@@ -286,6 +377,7 @@ export async function POST(request: Request) {
       ignoredFromSkippedAccounts,
       discoveredAccounts: result.discoveredAccounts.length,
       errors: result.errors,
+      potentialDuplicates,
     })
   } catch (error) {
     console.error('GL Import error:', error)

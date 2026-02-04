@@ -12,9 +12,26 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { useToast } from '@/components/ui/use-toast'
 import { formatCurrency, formatDate } from '@/lib/utils'
+import { getSubcategoriesForMapping } from '@/lib/category-utils'
 import { startOfMonth, endOfMonth, format, subMonths } from 'date-fns'
 import { Loader2 } from 'lucide-react'
 import { DateRangePicker, type DateRange } from '@/components/ui/date-range-picker'
@@ -33,11 +50,20 @@ type ViewTier = 'parent' | 'subcategory'
 
 export default function IncomePage() {
   const supabase = createClient()
+  const { toast } = useToast()
   const [transactions, setTransactions] = useState<TransactionWithCategory[]>([])
   const [lastMonthTransactions, setLastMonthTransactions] = useState<{ amount: number }[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [loading, setLoading] = useState(true)
   const [viewTier, setViewTier] = useState<ViewTier>('parent')
+
+  // Transaction detail modal state
+  const [detailModalOpen, setDetailModalOpen] = useState(false)
+  const [selectedCategoryName, setSelectedCategoryName] = useState<string | null>(null)
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null)
+  const [categoryTransactions, setCategoryTransactions] = useState<TransactionWithCategory[]>([])
+  const [savingCategory, setSavingCategory] = useState<string | null>(null)
+
   // Default to previous month since user likely has historical data
   const [dateRange, setDateRange] = useState<DateRange>(() => ({
     start: startOfMonth(subMonths(new Date(), 1)),
@@ -131,6 +157,62 @@ export default function IncomePage() {
   }
 
   const incomeByCategory = getAggregatedData()
+
+  // Open modal with transactions for a specific category
+  const openCategoryTransactions = (categoryId: string, categoryName: string) => {
+    setSelectedCategoryId(categoryId)
+    setSelectedCategoryName(categoryName)
+
+    // Filter transactions for this category
+    let filtered: TransactionWithCategory[]
+    if (viewTier === 'parent') {
+      // In parent view, categoryId is either a parent category or a standalone category
+      filtered = transactions.filter((t) => {
+        if (!t.category) return categoryId === 'uncategorized'
+        return t.category.parent_id === categoryId || t.category.id === categoryId
+      })
+    } else {
+      // In subcategory view, match exact category id
+      filtered = transactions.filter((t) => {
+        if (!t.category) return categoryId === 'uncategorized'
+        return t.category.id === categoryId
+      })
+    }
+
+    setCategoryTransactions(filtered)
+    setDetailModalOpen(true)
+  }
+
+  // Assign category to a single transaction
+  const assignCategoryToTransaction = async (transactionId: string, categoryId: string) => {
+    if (categoryId === 'none') return
+
+    setSavingCategory(transactionId)
+
+    const { error } = await supabase
+      .from('transactions')
+      .update({ category_id: categoryId })
+      .eq('id', transactionId)
+
+    if (error) {
+      toast({
+        title: 'Error assigning category',
+        description: error.message,
+        variant: 'destructive',
+      })
+    } else {
+      // Remove from modal list and update main transactions list
+      setCategoryTransactions((prev) => prev.filter((t) => t.id !== transactionId))
+      toast({
+        title: 'Category assigned',
+        description: 'Transaction has been categorized.',
+      })
+      // Refresh data to update the main view
+      loadData()
+    }
+
+    setSavingCategory(null)
+  }
 
   // Convert to chart format
   const chartData = incomeByCategory.map((cat) => ({
@@ -303,8 +385,13 @@ export default function IncomePage() {
                             <span className="font-medium">{category.name}</span>
                           </div>
                         </TableCell>
-                        <TableCell className="text-right text-muted-foreground">
-                          {category.count}
+                        <TableCell className="text-right">
+                          <button
+                            onClick={() => openCategoryTransactions(category.id, category.name)}
+                            className="text-muted-foreground hover:text-foreground hover:underline transition-colors"
+                          >
+                            {category.count}
+                          </button>
                         </TableCell>
                         <TableCell className="text-right font-medium text-green-500">
                           {formatCurrency(category.total)}
@@ -376,7 +463,7 @@ export default function IncomePage() {
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right text-green-500 font-medium">
-                        +{formatCurrency(Number(t.amount))}
+                        +{formatCurrency(Math.abs(Number(t.amount)))}
                       </TableCell>
                     </TableRow>
                   )
@@ -392,6 +479,115 @@ export default function IncomePage() {
           </Table>
         </CardContent>
       </Card>
+
+      {/* Category Transactions Modal */}
+      <Dialog open={detailModalOpen} onOpenChange={setDetailModalOpen}>
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle>{selectedCategoryName} Transactions</DialogTitle>
+            <DialogDescription>
+              {categoryTransactions.length} transaction{categoryTransactions.length !== 1 && 's'} in this category
+              {selectedCategoryId === 'uncategorized' && categoryTransactions.length > 0 && (
+                <span className="ml-2 text-amber-600">- Assign categories below</span>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto min-h-0">
+            {categoryTransactions.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                No transactions found.
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Description</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                    {selectedCategoryId === 'uncategorized' ? (
+                      <TableHead>Assign Category</TableHead>
+                    ) : (
+                      <TableHead>Category</TableHead>
+                    )}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {categoryTransactions.map((txn) => {
+                    const cat = txn.category
+                    const parentCat = cat?.parent_id
+                      ? categories.find((c) => c.id === cat.parent_id)
+                      : null
+                    let displayCategory = 'Other Income'
+                    if (cat) {
+                      if (parentCat) {
+                        displayCategory = `${parentCat.name} - ${cat.name}`
+                      } else {
+                        displayCategory = cat.name
+                      }
+                    }
+
+                    return (
+                      <TableRow key={txn.id}>
+                        <TableCell className="text-sm whitespace-nowrap">
+                          {formatDate(txn.transaction_date)}
+                        </TableCell>
+                        <TableCell className="text-sm max-w-[200px] truncate" title={txn.description || txn.memo || ''}>
+                          {txn.description || txn.memo || 'No description'}
+                        </TableCell>
+                        <TableCell className="text-right font-medium text-green-500 whitespace-nowrap">
+                          +{formatCurrency(Math.abs(Number(txn.amount)))}
+                        </TableCell>
+                        {selectedCategoryId === 'uncategorized' ? (
+                          <TableCell>
+                            <Select
+                              onValueChange={(value) => assignCategoryToTransaction(txn.id, value)}
+                              disabled={savingCategory === txn.id}
+                            >
+                              <SelectTrigger className="w-44 h-8 text-xs">
+                                <SelectValue placeholder="Select category..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {getSubcategoriesForMapping(categories, 'income').map((group) => (
+                                  <div key={group.parent.id}>
+                                    <SelectItem value={`__parent_${group.parent.id}__`} disabled>
+                                      <span className="text-xs font-semibold">- {group.parent.name} -</span>
+                                    </SelectItem>
+                                    {group.subcategories.map((sub) => (
+                                      <SelectItem key={sub.id} value={sub.id}>
+                                        {sub.name}
+                                      </SelectItem>
+                                    ))}
+                                  </div>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            {savingCategory === txn.id && (
+                              <Loader2 className="inline ml-2 h-3 w-3 animate-spin" />
+                            )}
+                          </TableCell>
+                        ) : (
+                          <TableCell>
+                            <Badge variant="default" className="text-xs">
+                              {displayCategory}
+                            </Badge>
+                          </TableCell>
+                        )}
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDetailModalOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

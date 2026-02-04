@@ -55,14 +55,15 @@ export function CategoryMapping({ categories, onCategoriesUpdate }: CategoryMapp
   const [qbAccounts, setQbAccounts] = useState<QBAccountMapping[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [applying, setApplying] = useState(false)
   const [recategorizingAll, setRecategorizingAll] = useState(false)
+  const [applyingMappings, setApplyingMappings] = useState(false)
   const [pendingMappings, setPendingMappings] = useState<Record<string, string>>({})
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
   const [similarModalOpen, setSimilarModalOpen] = useState(false)
   const [selectedAccountForSimilar, setSelectedAccountForSimilar] = useState<QBAccountMapping | null>(null)
   const [selectedSimilarAccounts, setSelectedSimilarAccounts] = useState<Set<string>>(new Set())
   const [addingSimilar, setAddingSimilar] = useState(false)
+  const [showOnlyUncategorized, setShowOnlyUncategorized] = useState(false)
 
   // Uncategorized transactions modal state
   const [uncategorizedModalOpen, setUncategorizedModalOpen] = useState(false)
@@ -70,6 +71,12 @@ export function CategoryMapping({ categories, onCategoriesUpdate }: CategoryMapp
   const [selectedQBAccountForUncategorized, setSelectedQBAccountForUncategorized] = useState<string | null>(null)
   const [loadingUncategorized, setLoadingUncategorized] = useState(false)
   const [savingCategory, setSavingCategory] = useState<string | null>(null)
+
+  // Orphan transactions (no QB account) state
+  const [orphanCount, setOrphanCount] = useState(0)
+  const [orphanModalOpen, setOrphanModalOpen] = useState(false)
+  const [orphanTransactions, setOrphanTransactions] = useState<Transaction[]>([])
+  const [loadingOrphans, setLoadingOrphans] = useState(false)
 
   useEffect(() => {
     loadQBAccounts()
@@ -171,6 +178,15 @@ export function CategoryMapping({ categories, onCategoriesUpdate }: CategoryMapp
     }
 
     setQbAccounts(filteredAccounts)
+
+    // Also load count of orphan transactions (no qb_account AND no category)
+    const { count: orphans } = await supabase
+      .from('transactions')
+      .select('*', { count: 'exact', head: true })
+      .is('qb_account', null)
+      .is('category_id', null)
+
+    setOrphanCount(orphans || 0)
     setLoading(false)
   }
 
@@ -252,13 +268,33 @@ export function CategoryMapping({ categories, onCategoriesUpdate }: CategoryMapp
         }
       }
 
-      toast({
-        title: 'Mappings saved',
-        description: `Updated ${Object.keys(pendingMappings).length} mapping(s)`,
-      })
-
+      const mappingCount = Object.keys(pendingMappings).length
       setPendingMappings({})
       onCategoriesUpdate()
+
+      // Now apply mappings to uncategorized transactions
+      let categorizedCount = 0
+      try {
+        const response = await fetch('/api/transactions/categorize', {
+          method: 'POST',
+        })
+
+        const result = await response.json()
+
+        if (response.ok) {
+          categorizedCount = result.categorized || 0
+        }
+      } catch {
+        // If categorize fails, still show success for mappings
+      }
+
+      toast({
+        title: 'Mappings saved & applied',
+        description: categorizedCount > 0
+          ? `Updated ${mappingCount} mapping(s), categorized ${categorizedCount} transaction(s)`
+          : `Updated ${mappingCount} mapping(s)`,
+      })
+
       await loadQBAccounts()
     } catch (error) {
       toast({
@@ -268,37 +304,6 @@ export function CategoryMapping({ categories, onCategoriesUpdate }: CategoryMapp
       })
     } finally {
       setSaving(false)
-    }
-  }
-
-  const applyMappingsToExisting = async () => {
-    setApplying(true)
-
-    try {
-      const response = await fetch('/api/transactions/categorize', {
-        method: 'POST',
-      })
-
-      const result = await response.json()
-
-      if (!response.ok) {
-        throw new Error(result.error || 'Failed to apply mappings')
-      }
-
-      toast({
-        title: 'Mappings applied',
-        description: `Categorized ${result.categorized} transaction(s)`,
-      })
-
-      await loadQBAccounts()
-    } catch (error) {
-      toast({
-        title: 'Error applying mappings',
-        description: error instanceof Error ? error.message : 'Unknown error',
-        variant: 'destructive',
-      })
-    } finally {
-      setApplying(false)
     }
   }
 
@@ -330,6 +335,39 @@ export function CategoryMapping({ categories, onCategoriesUpdate }: CategoryMapp
       })
     } finally {
       setRecategorizingAll(false)
+    }
+  }
+
+  const applyMappingsToUncategorized = async () => {
+    setApplyingMappings(true)
+
+    try {
+      const response = await fetch('/api/transactions/categorize', {
+        method: 'POST',
+      })
+
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to apply mappings')
+      }
+
+      toast({
+        title: 'Mappings applied',
+        description: result.categorized > 0
+          ? `Categorized ${result.categorized} transaction(s)`
+          : 'No uncategorized transactions matched existing mappings',
+      })
+
+      await loadQBAccounts()
+    } catch (error) {
+      toast({
+        title: 'Error applying mappings',
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'destructive',
+      })
+    } finally {
+      setApplyingMappings(false)
     }
   }
 
@@ -552,12 +590,94 @@ export function CategoryMapping({ categories, onCategoriesUpdate }: CategoryMapp
     setSavingCategory(null)
   }
 
+  const openOrphanModal = async () => {
+    setLoadingOrphans(true)
+    setOrphanModalOpen(true)
+
+    const { data: transactions } = await supabase
+      .from('transactions')
+      .select('*')
+      .is('qb_account', null)
+      .is('category_id', null)
+      .order('transaction_date', { ascending: false })
+
+    setOrphanTransactions(transactions || [])
+    setLoadingOrphans(false)
+  }
+
+  const assignCategoryToOrphan = async (transactionId: string, categoryId: string) => {
+    if (categoryId === 'none') return
+
+    setSavingCategory(transactionId)
+
+    const { error } = await supabase
+      .from('transactions')
+      .update({ category_id: categoryId })
+      .eq('id', transactionId)
+
+    if (error) {
+      toast({
+        title: 'Error assigning category',
+        description: error.message,
+        variant: 'destructive',
+      })
+    } else {
+      setOrphanTransactions((prev) => prev.filter((t) => t.id !== transactionId))
+      setOrphanCount((prev) => prev - 1)
+      toast({
+        title: 'Category assigned',
+        description: 'Transaction has been categorized.',
+      })
+    }
+
+    setSavingCategory(null)
+  }
+
+  const assignCategoryToAllOrphans = async (categoryId: string) => {
+    if (categoryId === 'none' || orphanTransactions.length === 0) return
+
+    setSavingCategory('all-orphans')
+
+    const transactionIds = orphanTransactions.map((t) => t.id)
+
+    const { error } = await supabase
+      .from('transactions')
+      .update({ category_id: categoryId })
+      .in('id', transactionIds)
+
+    if (error) {
+      toast({
+        title: 'Error assigning category',
+        description: error.message,
+        variant: 'destructive',
+      })
+    } else {
+      toast({
+        title: 'Categories assigned',
+        description: `${transactionIds.length} transaction(s) have been categorized.`,
+      })
+      setOrphanTransactions([])
+      setOrphanCount(0)
+      await loadQBAccounts()
+    }
+
+    setSavingCategory(null)
+  }
+
   const totalUncategorized = qbAccounts.reduce((sum, a) => sum + a.uncategorizedCount, 0)
   const hasPendingChanges = Object.keys(pendingMappings).length > 0
   const totalSimilarUnmapped = qbAccounts.reduce(
     (sum, a) => sum + (a.similarUnmapped?.length || 0),
     0
   )
+
+  // Filter accounts based on toggle
+  const filteredQbAccounts = useMemo(() => {
+    if (!showOnlyUncategorized) return qbAccounts
+    return qbAccounts.filter(a => !a.mappedCategoryId)
+  }, [qbAccounts, showOnlyUncategorized])
+
+  const uncategorizedAccountCount = qbAccounts.filter(a => !a.mappedCategoryId).length
 
   if (loading) {
     return (
@@ -587,24 +707,36 @@ export function CategoryMapping({ categories, onCategoriesUpdate }: CategoryMapp
               {totalSimilarUnmapped} similar unmapped account{totalSimilarUnmapped !== 1 && 's'} detected
             </div>
           )}
+          {orphanCount > 0 && (
+            <div className="flex items-center gap-2 text-sm text-purple-600">
+              <AlertCircle className="h-4 w-4" />
+              <button
+                onClick={openOrphanModal}
+                className="hover:underline cursor-pointer"
+              >
+                {orphanCount} transaction{orphanCount !== 1 && 's'} without QB account
+              </button>
+            </div>
+          )}
         </div>
         <div className="flex gap-2">
           <Button
             variant="outline"
-            onClick={applyMappingsToExisting}
-            disabled={applying || recategorizingAll || totalUncategorized === 0}
+            onClick={applyMappingsToUncategorized}
+            disabled={saving || applyingMappings || recategorizingAll || totalUncategorized === 0}
+            title="Apply existing mappings to uncategorized transactions"
           >
-            {applying ? (
+            {applyingMappings ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             ) : (
               <RefreshCw className="mr-2 h-4 w-4" />
             )}
-            Apply to Uncategorized
+            Apply Mappings
           </Button>
           <Button
             variant="outline"
             onClick={recategorizeAllTransactions}
-            disabled={applying || recategorizingAll || qbAccounts.length === 0}
+            disabled={saving || recategorizingAll || applyingMappings || qbAccounts.length === 0}
           >
             {recategorizingAll ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -619,14 +751,35 @@ export function CategoryMapping({ categories, onCategoriesUpdate }: CategoryMapp
             ) : (
               <Save className="mr-2 h-4 w-4" />
             )}
-            Save Mappings
+            Save & Apply
           </Button>
         </div>
       </div>
 
+      {/* Filter toggle */}
+      {qbAccounts.length > 0 && uncategorizedAccountCount > 0 && (
+        <div className="flex items-center gap-2">
+          <Checkbox
+            id="show-only-uncategorized"
+            checked={showOnlyUncategorized}
+            onCheckedChange={(checked) => setShowOnlyUncategorized(checked === true)}
+          />
+          <label
+            htmlFor="show-only-uncategorized"
+            className="text-sm cursor-pointer select-none"
+          >
+            Show only uncategorized ({uncategorizedAccountCount})
+          </label>
+        </div>
+      )}
+
       {qbAccounts.length === 0 ? (
         <div className="text-center py-8 text-muted-foreground">
           No QuickBooks accounts found. Import some transactions first.
+        </div>
+      ) : filteredQbAccounts.length === 0 ? (
+        <div className="text-center py-8 text-muted-foreground">
+          All QB accounts are categorized.
         </div>
       ) : (
         <Table>
@@ -641,7 +794,7 @@ export function CategoryMapping({ categories, onCategoriesUpdate }: CategoryMapp
             </TableRow>
           </TableHeader>
           <TableBody>
-            {qbAccounts.map((account) => {
+            {filteredQbAccounts.map((account) => {
               const hasSimilar = (account.similarUnmapped?.length || 0) > 0
               const isExpanded = expandedRows.has(account.accountName)
 
@@ -971,7 +1124,7 @@ export function CategoryMapping({ categories, onCategoriesUpdate }: CategoryMapp
                         {formatDate(txn.transaction_date)}
                       </TableCell>
                       <TableCell className="text-sm max-w-[180px] truncate" title={txn.description || txn.memo || ''}>
-                        {txn.description || txn.memo || txn.qb_name || 'No description'}
+                        {txn.description || txn.memo || 'No description'}
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground max-w-[120px] truncate" title={txn.split_account || ''}>
                         {txn.split_account || '—'}
@@ -1034,6 +1187,145 @@ export function CategoryMapping({ categories, onCategoriesUpdate }: CategoryMapp
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setUncategorizedModalOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Orphan Transactions Modal (no QB account) */}
+      <Dialog open={orphanModalOpen} onOpenChange={setOrphanModalOpen}>
+        <DialogContent className="max-w-3xl max-h-[80vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Transactions Without QB Account</DialogTitle>
+            <DialogDescription>
+              {orphanTransactions.length} transaction{orphanTransactions.length !== 1 && 's'} without a QuickBooks account name.
+              These may need manual categorization.
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* Bulk categorize option */}
+          {orphanTransactions.length > 0 && (
+            <div className="flex items-center gap-3 p-3 bg-muted/50 rounded-lg">
+              <span className="text-sm font-medium">Categorize all as:</span>
+              <Select
+                onValueChange={(value) => assignCategoryToAllOrphans(value)}
+                disabled={savingCategory === 'all-orphans'}
+              >
+                <SelectTrigger className="w-56">
+                  <SelectValue placeholder="Select category..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {getSubcategoriesForMapping(categories, 'expense').map((group) => (
+                    <div key={group.parent.id}>
+                      <SelectItem value={`__parent_${group.parent.id}__`} disabled>
+                        <span className="text-xs font-semibold">- {group.parent.name} -</span>
+                      </SelectItem>
+                      {group.subcategories.map((sub) => (
+                        <SelectItem key={sub.id} value={sub.id}>
+                          {sub.name}
+                        </SelectItem>
+                      ))}
+                    </div>
+                  ))}
+                  {getSubcategoriesForMapping(categories, 'income').length > 0 && (
+                    <>
+                      <SelectItem value="__income_divider__" disabled>
+                        <span className="text-xs font-semibold">━━━ INCOME ━━━</span>
+                      </SelectItem>
+                      {getSubcategoriesForMapping(categories, 'income').map((group) => (
+                        <div key={group.parent.id}>
+                          <SelectItem value={`__parent_${group.parent.id}__`} disabled>
+                            <span className="text-xs font-semibold">- {group.parent.name} -</span>
+                          </SelectItem>
+                          {group.subcategories.map((sub) => (
+                            <SelectItem key={sub.id} value={sub.id}>
+                              {sub.name}
+                            </SelectItem>
+                          ))}
+                        </div>
+                      ))}
+                    </>
+                  )}
+                </SelectContent>
+              </Select>
+              {savingCategory === 'all-orphans' && <Loader2 className="h-4 w-4 animate-spin" />}
+            </div>
+          )}
+
+          <div className="flex-1 overflow-y-auto min-h-0">
+            {loadingOrphans ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin" />
+              </div>
+            ) : orphanTransactions.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                No uncategorized transactions without QB account found.
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Description</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                    <TableHead>Assign Category</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {orphanTransactions.map((txn) => (
+                    <TableRow key={txn.id}>
+                      <TableCell className="text-sm whitespace-nowrap">
+                        {formatDate(txn.transaction_date)}
+                      </TableCell>
+                      <TableCell className="text-sm max-w-[180px] truncate" title={txn.description || txn.memo || ''}>
+                        {txn.description || txn.memo || 'No description'}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="text-xs capitalize">
+                          {txn.transaction_type}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className={`text-right font-medium whitespace-nowrap ${
+                        Number(txn.amount) >= 0 ? 'text-green-600' : 'text-red-500'
+                      }`}>
+                        {formatCurrency(Number(txn.amount))}
+                      </TableCell>
+                      <TableCell>
+                        <Select
+                          onValueChange={(value) => assignCategoryToOrphan(txn.id, value)}
+                          disabled={savingCategory === txn.id}
+                        >
+                          <SelectTrigger className="w-40 h-8 text-xs">
+                            <SelectValue placeholder="Select..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {getSubcategoriesForMapping(categories, txn.transaction_type === 'income' ? 'income' : 'expense').map((group) => (
+                              <div key={group.parent.id}>
+                                <SelectItem value={`__parent_${group.parent.id}__`} disabled>
+                                  <span className="text-xs font-semibold">- {group.parent.name} -</span>
+                                </SelectItem>
+                                {group.subcategories.map((sub) => (
+                                  <SelectItem key={sub.id} value={sub.id}>
+                                    {sub.name}
+                                  </SelectItem>
+                                ))}
+                              </div>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {savingCategory === txn.id && <Loader2 className="inline ml-2 h-3 w-3 animate-spin" />}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOrphanModalOpen(false)}>
               Close
             </Button>
           </DialogFooter>

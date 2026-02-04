@@ -27,20 +27,22 @@ export interface AllMappingsResult {
   ignoredAccounts: Set<string>  // lowercase qb_account_name
   accountMappings: Map<string, { accountId: string; accountName: string; accountType: AccountType }>
   categoryMappings: Map<string, { categoryId: string; categoryName: string; categoryType: 'income' | 'expense' }>
+  incomeExpenseClassifications: Map<string, 'income' | 'expense'>  // User's manual classifications
 }
 
 /**
- * Load all QB account mappings for a user from all three sources:
+ * Load all QB account mappings for a user from all four sources:
  * 1. qb_ignored_accounts table
  * 2. accounts.qb_account_names[]
  * 3. categories.qb_category_names[]
+ * 4. qb_account_classifications table (user's manual income/expense classifications)
  */
 export async function getAllQBMappings(
   supabase: SupabaseClient,
   userId: string
 ): Promise<AllMappingsResult> {
-  // Fetch all three sources in parallel
-  const [ignoredResult, accountsResult, categoriesResult] = await Promise.all([
+  // Fetch all four sources in parallel
+  const [ignoredResult, accountsResult, categoriesResult, classificationsResult] = await Promise.all([
     supabase
       .from('qb_ignored_accounts')
       .select('qb_account_name')
@@ -52,6 +54,10 @@ export async function getAllQBMappings(
     supabase
       .from('categories')
       .select('id, name, type, qb_category_names')
+      .eq('user_id', userId),
+    supabase
+      .from('qb_account_classifications')
+      .select('qb_account_name, classification')
       .eq('user_id', userId),
   ])
 
@@ -88,7 +94,16 @@ export async function getAllQBMappings(
     }
   }
 
-  return { ignoredAccounts, accountMappings, categoryMappings }
+  // Build income/expense classifications map (user's manual classifications)
+  const incomeExpenseClassifications = new Map<string, 'income' | 'expense'>()
+  for (const classification of (classificationsResult.data || []) as { qb_account_name: string; classification: string }[]) {
+    incomeExpenseClassifications.set(
+      classification.qb_account_name.toLowerCase(),
+      classification.classification as 'income' | 'expense'
+    )
+  }
+
+  return { ignoredAccounts, accountMappings, categoryMappings, incomeExpenseClassifications }
 }
 
 /**
@@ -124,7 +139,13 @@ export function classifyQBAccount(
     return categoryMapping.categoryType === 'income' ? 'income' : 'expense'
   }
 
-  // 4. Auto-classify numbered accounts by QB convention
+  // 4. Check user's manual income/expense classifications
+  const manualClassification = mappings.incomeExpenseClassifications.get(normalizedName)
+  if (manualClassification) {
+    return manualClassification
+  }
+
+  // 6. Auto-classify numbered accounts by QB convention
   // This prevents re-prompting for income/expense accounts that aren't yet mapped to specific categories
   const match = qbAccountName.match(/^(\d)/)
   if (match) {
@@ -140,7 +161,7 @@ export function classifyQBAccount(
     }
   }
 
-  // 5. Not found in any mapping
+  // 7. Not found in any mapping
   return 'unmapped'
 }
 
