@@ -36,15 +36,24 @@ export async function GET(request: Request) {
     // Get transaction stats for each batch
     const batchesWithStats = await Promise.all(
       (importBatches || []).map(async (batch) => {
+        // Get exact count using Supabase's count feature (no row limit)
+        const { count: transactionCount } = await supabase
+          .from('transactions')
+          .select('*', { count: 'exact', head: true })
+          .eq('import_batch_id', batch.id)
+
+        // Get date range and total using aggregation via a smaller query
+        // Only fetch what we need for stats
         const { data: transactions } = await supabase
           .from('transactions')
           .select('transaction_date, amount')
           .eq('import_batch_id', batch.id)
+          .range(0, 49999)
 
         let minDate = null
         let maxDate = null
-        let totalAmount = 0
-        const transactionCount = transactions?.length || 0
+        let totalIncome = 0
+        let totalExpenses = 0
 
         if (transactions && transactions.length > 0) {
           const dates = transactions
@@ -53,7 +62,14 @@ export async function GET(request: Request) {
             .sort()
           minDate = dates[0]
           maxDate = dates[dates.length - 1]
-          totalAmount = transactions.reduce((sum, t) => sum + Number(t.amount), 0)
+          for (const t of transactions) {
+            const amount = Number(t.amount)
+            if (amount > 0) {
+              totalIncome += amount
+            } else {
+              totalExpenses += Math.abs(amount)
+            }
+          }
         }
 
         // Get duplicates skipped from metadata
@@ -65,8 +81,9 @@ export async function GET(request: Request) {
           stats: {
             minDate,
             maxDate,
-            totalAmount,
-            transactionCount,
+            totalIncome,
+            totalExpenses,
+            transactionCount: transactionCount || 0,
             duplicatesSkipped,
           },
         }

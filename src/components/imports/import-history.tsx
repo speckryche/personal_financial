@@ -27,7 +27,8 @@ import { Loader2, Trash2, FileSpreadsheet, AlertTriangle } from 'lucide-react'
 interface ImportBatchStats {
   minDate: string | null
   maxDate: string | null
-  totalAmount: number
+  totalIncome: number
+  totalExpenses: number
   transactionCount: number
   duplicatesSkipped: number
 }
@@ -310,7 +311,8 @@ export function ImportHistory({ fileType = 'quickbooks_transactions', onImportDe
               <TableHead>Date Range</TableHead>
               <TableHead className="text-right">Transactions</TableHead>
               <TableHead className="text-right">Duplicates Skipped</TableHead>
-              <TableHead className="text-right">Total Amount</TableHead>
+              <TableHead className="text-right">Income</TableHead>
+              <TableHead className="text-right">Expenses</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="w-16"></TableHead>
             </TableRow>
@@ -337,8 +339,11 @@ export function ImportHistory({ fileType = 'quickbooks_transactions', onImportDe
                     <span className="text-muted-foreground">0</span>
                   )}
                 </TableCell>
-                <TableCell className="text-right">
-                  {formatCurrency(importBatch.stats.totalAmount)}
+                <TableCell className="text-right text-green-600">
+                  {formatCurrency(importBatch.stats.totalIncome)}
+                </TableCell>
+                <TableCell className="text-right text-red-600">
+                  {formatCurrency(importBatch.stats.totalExpenses)}
                 </TableCell>
                 <TableCell>
                   {getStatusBadge(importBatch.status)}
@@ -378,8 +383,14 @@ export function ImportHistory({ fileType = 'quickbooks_transactions', onImportDe
               <p className="font-medium">{selectedImport?.filename}</p>
               <p className="text-muted-foreground">
                 {selectedImport?.stats.transactionCount} transactions
-                {selectedImport?.stats.totalAmount ? ` (${formatCurrency(selectedImport.stats.totalAmount)})` : ''}
               </p>
+              {selectedImport && (selectedImport.stats.totalIncome > 0 || selectedImport.stats.totalExpenses > 0) && (
+                <p className="text-muted-foreground text-xs mt-1">
+                  <span className="text-green-600">{formatCurrency(selectedImport.stats.totalIncome)} income</span>
+                  {' · '}
+                  <span className="text-red-600">{formatCurrency(selectedImport.stats.totalExpenses)} expenses</span>
+                </p>
+              )}
             </div>
 
             <div className="space-y-2">

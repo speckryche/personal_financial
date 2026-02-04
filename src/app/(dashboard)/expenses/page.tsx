@@ -93,23 +93,13 @@ export default function ExpensesPage() {
     const startDate = dateRange.start.toISOString().split('T')[0]
     const endDate = dateRange.end.toISOString().split('T')[0]
 
-    const [transactionsRes, categoriesRes] = await Promise.all([
-      supabase
-        .from('transactions')
-        .select(`
-          *,
-          category:categories!category_id(id, name, color, parent_id)
-        `)
-        .eq('transaction_type', 'expense')
-        .gte('transaction_date', startDate)
-        .lte('transaction_date', endDate)
-        .order('transaction_date', { ascending: false })
-        .limit(500),
+    const [expensesRes, categoriesRes] = await Promise.all([
+      fetch(`/api/transactions/expenses?startDate=${startDate}&endDate=${endDate}`).then(r => r.json()),
       supabase.from('categories').select('*'),
     ])
 
-    if (transactionsRes.data) {
-      setTransactions(transactionsRes.data as TransactionWithCategory[])
+    if (expensesRes.transactions) {
+      setTransactions(expensesRes.transactions as TransactionWithCategory[])
     }
     if (categoriesRes.data) {
       setCategories(categoriesRes.data)
@@ -118,21 +108,12 @@ export default function ExpensesPage() {
     setLoading(false)
   }
 
-  // Helper to check if a transaction is a balance sheet transfer
-  // These have qb_account starting with a digit (e.g., "1000 Checking", "1500 Credit Card")
-  // which indicates a balance sheet account from the chart of accounts
-  const isBalanceSheetTransfer = (qbAccount: string | null | undefined): boolean => {
-    if (!qbAccount) return false
-    return /^\d/.test(qbAccount)
-  }
-
-  // Filter out balance sheet transfers for expense display
-  const nonTransferTransactions = transactions.filter((t) => !isBalanceSheetTransfer(t.qb_account))
-  console.log('Non-transfer transactions:', nonTransferTransactions.length)
+  // No need to filter - balance sheet transactions already have transaction_type='transfer'
+  // and won't appear in expense queries (which filter by transaction_type='expense')
 
   // Aggregate by category based on view tier
   const getAggregatedData = (): AggregatedCategory[] => {
-    const transactionsWithCategory = nonTransferTransactions.map((t) => {
+    const transactionsWithCategory = transactions.map((t) => {
       const cat = t.category
       // Look up parent from categories list if category has a parent_id
       const parentCat = cat?.parent_id
@@ -178,14 +159,14 @@ export default function ExpensesPage() {
       // We need to include all transactions where:
       // - The transaction's category's parent_id matches categoryId, OR
       // - The transaction's category id matches categoryId (for categories without parents)
-      filtered = nonTransferTransactions.filter((t) => {
+      filtered = transactions.filter((t) => {
         if (!t.category) return categoryId === 'uncategorized'
         // Check if this category's parent matches, or if this is the category itself
         return t.category.parent_id === categoryId || t.category.id === categoryId
       })
     } else {
       // In subcategory view, match exact category id
-      filtered = nonTransferTransactions.filter((t) => {
+      filtered = transactions.filter((t) => {
         if (!t.category) return categoryId === 'uncategorized'
         return t.category.id === categoryId
       })
@@ -304,7 +285,7 @@ export default function ExpensesPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold">{nonTransferTransactions?.length || 0}</div>
+            <div className="text-3xl font-bold">{transactions?.length || 0}</div>
             <p className="text-xs text-muted-foreground">{getDateRangeLabel()}</p>
           </CardContent>
         </Card>
@@ -433,8 +414,8 @@ export default function ExpensesPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {nonTransferTransactions.length > 0 ? (
-                nonTransferTransactions.slice(0, 20).map((t) => {
+              {transactions.length > 0 ? (
+                transactions.slice(0, 20).map((t) => {
                   const cat = t.category
                   const parentCat = cat?.parent_id
                     ? categories.find((c) => c.id === cat.parent_id)

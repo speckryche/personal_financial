@@ -68,12 +68,14 @@ export async function POST(request: Request) {
     let existingKeys = new Set<string>()
     let existingPartialKeys = new Map<string, { id: string; date: string; amount: number; description: string; qb_account: string | null }>()
     if (minDate && maxDate) {
+      // Use range to override Supabase's default 1000 row limit
       const { data: existingTransactions } = await supabase
         .from('transactions')
         .select('id, transaction_date, amount, description, qb_account')
         .eq('user_id', user.id)
         .gte('transaction_date', minDate)
         .lte('transaction_date', maxDate)
+        .range(0, 49999)
 
       if (existingTransactions) {
         for (const t of existingTransactions) {

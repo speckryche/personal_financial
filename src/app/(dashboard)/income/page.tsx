@@ -84,33 +84,19 @@ export default function IncomePage() {
     const duration = dateRange.end.getTime() - dateRange.start.getTime()
     const prevEnd = new Date(dateRange.start.getTime() - 1)
     const prevStart = new Date(prevEnd.getTime() - duration)
+    const prevStartDate = prevStart.toISOString().split('T')[0]
+    const prevEndDate = prevEnd.toISOString().split('T')[0]
 
-    const [transactionsRes, lastPeriodRes, categoriesRes] = await Promise.all([
-      supabase
-        .from('transactions')
-        .select(`
-          *,
-          category:categories!category_id(id, name, color, parent_id)
-        `)
-        .eq('transaction_type', 'income')
-        .gte('transaction_date', startDate)
-        .lte('transaction_date', endDate)
-        .order('transaction_date', { ascending: false })
-        .limit(500),
-      supabase
-        .from('transactions')
-        .select('amount')
-        .eq('transaction_type', 'income')
-        .gte('transaction_date', prevStart.toISOString().split('T')[0])
-        .lte('transaction_date', prevEnd.toISOString().split('T')[0]),
+    const [incomeRes, categoriesRes] = await Promise.all([
+      fetch(`/api/transactions/income?startDate=${startDate}&endDate=${endDate}&prevStartDate=${prevStartDate}&prevEndDate=${prevEndDate}`).then(r => r.json()),
       supabase.from('categories').select('*'),
     ])
 
-    if (transactionsRes.data) {
-      setTransactions(transactionsRes.data as TransactionWithCategory[])
+    if (incomeRes.transactions) {
+      setTransactions(incomeRes.transactions as TransactionWithCategory[])
     }
-    if (lastPeriodRes.data) {
-      setLastMonthTransactions(lastPeriodRes.data as { amount: number }[])
+    if (incomeRes.prevPeriodTransactions) {
+      setLastMonthTransactions(incomeRes.prevPeriodTransactions as { amount: number }[])
     }
     if (categoriesRes.data) {
       setCategories(categoriesRes.data)
