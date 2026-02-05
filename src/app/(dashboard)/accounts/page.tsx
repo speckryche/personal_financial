@@ -31,6 +31,8 @@ import {
   groupAccountsByType,
   calculateNetWorthTotals,
   recordBalanceSnapshot,
+  updateMarketValue,
+  clearMarketValue,
   isLiabilityAccount,
   type AccountWithBalance,
 } from '@/lib/account-balance'
@@ -55,6 +57,9 @@ export default function AccountsPage() {
     date: new Date().toISOString().split('T')[0],
   })
   const [savingBalance, setSavingBalance] = useState(false)
+  const [marketValueDialogOpen, setMarketValueDialogOpen] = useState(false)
+  const [marketValueEntry, setMarketValueEntry] = useState('')
+  const [savingMarketValue, setSavingMarketValue] = useState(false)
 
   useEffect(() => {
     loadAccounts()
@@ -132,6 +137,74 @@ export default function AccountsPage() {
     }
 
     setSavingBalance(false)
+  }
+
+  const handleUpdateMarketValue = async () => {
+    if (!selectedAccount || !marketValueEntry) return
+
+    setSavingMarketValue(true)
+
+    const value = parseFloat(marketValueEntry)
+    if (isNaN(value)) {
+      toast({
+        title: 'Invalid value',
+        description: 'Please enter a valid number',
+        variant: 'destructive',
+      })
+      setSavingMarketValue(false)
+      return
+    }
+
+    const result = await updateMarketValue(supabase, selectedAccount.account.id, value)
+
+    if (result.success) {
+      toast({ title: 'Market value updated' })
+      setMarketValueDialogOpen(false)
+      setMarketValueEntry('')
+      await loadAccounts()
+      // Refresh selected account with updated data
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        const refreshed = await getAccountsWithBalances(supabase, user.id)
+        const updated = refreshed.find(a => a.id === selectedAccount.account.id)
+        if (updated) handleAccountClick(updated)
+      }
+    } else {
+      toast({
+        title: 'Error updating market value',
+        description: result.error,
+        variant: 'destructive',
+      })
+    }
+
+    setSavingMarketValue(false)
+  }
+
+  const handleClearMarketValue = async () => {
+    if (!selectedAccount) return
+
+    const result = await clearMarketValue(supabase, selectedAccount.account.id)
+
+    if (result.success) {
+      toast({ title: 'Market value cleared, reverting to cost basis' })
+      await loadAccounts()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        const refreshed = await getAccountsWithBalances(supabase, user.id)
+        const updated = refreshed.find(a => a.id === selectedAccount.account.id)
+        if (updated) handleAccountClick(updated)
+      }
+    } else {
+      toast({
+        title: 'Error clearing market value',
+        description: result.error,
+        variant: 'destructive',
+      })
+    }
+  }
+
+  const isMarketValueAccount = (accountType: string) => {
+    return ['investment', 'retirement', 'other'].includes(accountType)
   }
 
   const { assets, liabilities } = groupAccountsByType(accounts.filter(a => a.is_active))
@@ -243,10 +316,17 @@ export default function AccountsPage() {
                         </div>
                       </TableCell>
                       <TableCell className="text-right">
-                        {account.starting_balance !== null ? (
-                          <span className="font-medium text-green-600">
-                            {formatCurrency(account.current_balance)}
-                          </span>
+                        {account.starting_balance !== null || account.market_value != null ? (
+                          <div>
+                            <span className="font-medium text-green-600">
+                              {formatCurrency(account.display_balance)}
+                            </span>
+                            {account.market_value != null && (
+                              <div className="text-xs text-muted-foreground">
+                                MV {account.market_value_updated_at && `· ${formatDate(account.market_value_updated_at)}`}
+                              </div>
+                            )}
+                          </div>
                         ) : (
                           <span className="text-muted-foreground text-sm">Not set</span>
                         )}
@@ -303,10 +383,17 @@ export default function AccountsPage() {
                         </div>
                       </TableCell>
                       <TableCell className="text-right">
-                        {account.starting_balance !== null ? (
-                          <span className="font-medium text-red-500">
-                            -{formatCurrency(Math.abs(account.current_balance))}
-                          </span>
+                        {account.starting_balance !== null || account.market_value != null ? (
+                          <div>
+                            <span className="font-medium text-red-500">
+                              -{formatCurrency(Math.abs(account.display_balance))}
+                            </span>
+                            {account.market_value != null && (
+                              <div className="text-xs text-muted-foreground">
+                                MV {account.market_value_updated_at && `· ${formatDate(account.market_value_updated_at)}`}
+                              </div>
+                            )}
+                          </div>
                         ) : (
                           <span className="text-muted-foreground text-sm">Not set</span>
                         )}
@@ -348,33 +435,84 @@ export default function AccountsPage() {
                 {/* Balance Info */}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="p-4 rounded-lg bg-muted/50">
-                    <div className="text-sm text-muted-foreground">Current Balance</div>
+                    <div className="text-sm text-muted-foreground">
+                      {selectedAccount.account.market_value != null ? 'Market Value' : 'Current Balance'}
+                    </div>
                     <div className={`text-2xl font-bold ${
                       isLiabilityAccount(selectedAccount.account.account_type)
                         ? 'text-red-500'
                         : 'text-green-600'
                     }`}>
-                      {selectedAccount.account.starting_balance !== null
+                      {selectedAccount.account.starting_balance !== null || selectedAccount.account.market_value != null
                         ? (isLiabilityAccount(selectedAccount.account.account_type)
-                            ? `-${formatCurrency(Math.abs(selectedAccount.account.current_balance))}`
-                            : formatCurrency(selectedAccount.account.current_balance))
+                            ? `-${formatCurrency(Math.abs(selectedAccount.account.display_balance))}`
+                            : formatCurrency(selectedAccount.account.display_balance))
                         : 'Not set'}
                     </div>
+                    {selectedAccount.account.market_value_updated_at && (
+                      <div className="text-xs text-muted-foreground">
+                        Updated {formatDate(selectedAccount.account.market_value_updated_at)}
+                      </div>
+                    )}
                   </div>
                   <div className="p-4 rounded-lg bg-muted/50">
-                    <div className="text-sm text-muted-foreground">Starting Balance</div>
-                    <div className="text-xl font-semibold">
-                      {selectedAccount.account.starting_balance !== null
-                        ? formatCurrency(selectedAccount.account.starting_balance)
-                        : 'Not set'}
+                    <div className="text-sm text-muted-foreground">
+                      {selectedAccount.account.market_value != null ? 'Cost Basis' : 'Starting Balance'}
                     </div>
-                    {selectedAccount.account.starting_balance_date && (
+                    <div className="text-xl font-semibold">
+                      {selectedAccount.account.market_value != null
+                        ? formatCurrency(selectedAccount.account.current_balance)
+                        : (selectedAccount.account.starting_balance !== null
+                          ? formatCurrency(selectedAccount.account.starting_balance)
+                          : 'Not set')}
+                    </div>
+                    {selectedAccount.account.market_value == null && selectedAccount.account.starting_balance_date && (
                       <div className="text-xs text-muted-foreground">
                         as of {formatDate(selectedAccount.account.starting_balance_date)}
                       </div>
                     )}
                   </div>
                 </div>
+
+                {/* Gain/Loss display when market value is set */}
+                {selectedAccount.account.gain_loss != null && (
+                  <div className="p-3 rounded-lg bg-muted/50 flex justify-between items-center">
+                    <span className="text-sm text-muted-foreground">Unrealized Gain/Loss</span>
+                    <span className={`font-semibold ${selectedAccount.account.gain_loss >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                      {selectedAccount.account.gain_loss >= 0 ? '+' : ''}{formatCurrency(selectedAccount.account.gain_loss)}
+                    </span>
+                  </div>
+                )}
+
+                {/* Market Value Actions for investment-type accounts */}
+                {isMarketValueAccount(selectedAccount.account.account_type) && (
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setMarketValueEntry(
+                          selectedAccount.account.market_value != null
+                            ? String(selectedAccount.account.market_value)
+                            : ''
+                        )
+                        setMarketValueDialogOpen(true)
+                      }}
+                    >
+                      <TrendingUp className="h-4 w-4 mr-2" />
+                      {selectedAccount.account.market_value != null ? 'Update' : 'Set'} Market Value
+                    </Button>
+                    {selectedAccount.account.market_value != null && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleClearMarketValue}
+                      >
+                        Clear MV
+                      </Button>
+                    )}
+                  </div>
+                )}
 
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-muted-foreground">
@@ -430,6 +568,46 @@ export default function AccountsPage() {
               </div>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Update Market Value Dialog */}
+      <Dialog open={marketValueDialogOpen} onOpenChange={setMarketValueDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Update Market Value</DialogTitle>
+            <DialogDescription>
+              Set the current market value for {selectedAccount?.account.name}.
+              This overrides the calculated balance (cost basis) for net worth calculations.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="market-value">Market Value</Label>
+              <Input
+                id="market-value"
+                type="number"
+                step="0.01"
+                placeholder="0.00"
+                value={marketValueEntry}
+                onChange={(e) => setMarketValueEntry(e.target.value)}
+              />
+            </div>
+            {selectedAccount && selectedAccount.account.starting_balance !== null && (
+              <p className="text-xs text-muted-foreground">
+                Cost basis (calculated): {formatCurrency(selectedAccount.account.current_balance)}
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMarketValueDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleUpdateMarketValue} disabled={savingMarketValue || !marketValueEntry}>
+              {savingMarketValue && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Save Market Value
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

@@ -40,6 +40,8 @@ export interface Account {
   account_number_last4: string | null
   is_active: boolean
   qb_account_names: string[]
+  market_value: number | null
+  market_value_updated_at: string | null
   created_at: string
   updated_at: string
 }

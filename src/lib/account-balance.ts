@@ -3,6 +3,8 @@ import type { Account, AccountBalance, Transaction } from '@/types/database'
 
 export interface AccountWithBalance extends Account {
   current_balance: number
+  display_balance: number
+  gain_loss: number | null
   starting_balance: number | null
   starting_balance_date: string | null
   transaction_count: number
@@ -192,10 +194,14 @@ export async function getAccountsWithBalances(
     const { data: transactions, count } = await query
 
     const transactionSum = (transactions || []).reduce((sum, t) => sum + Number(t.amount), 0)
+    const currentBalance = startingBalance + transactionSum
+    const marketValue = account.market_value != null ? Number(account.market_value) : null
 
     accountsWithBalances.push({
       ...account,
-      current_balance: startingBalance + transactionSum,
+      current_balance: currentBalance,
+      display_balance: marketValue ?? currentBalance,
+      gain_loss: marketValue != null ? marketValue - currentBalance : null,
       starting_balance: startingBalanceRecord ? Number(startingBalanceRecord.balance) : null,
       starting_balance_date: startingDate,
       transaction_count: transactions?.length || 0,
@@ -333,10 +339,55 @@ export function calculateNetWorthTotals(accounts: AccountWithBalance[]): {
 } {
   const { assets, liabilities } = groupAccountsByType(accounts)
 
-  const totalAssets = assets.reduce((sum, a) => sum + a.current_balance, 0)
+  const totalAssets = assets.reduce((sum, a) => sum + a.display_balance, 0)
   // Liabilities are typically stored as positive numbers (amount owed)
-  const totalLiabilities = Math.abs(liabilities.reduce((sum, a) => sum + a.current_balance, 0))
+  const totalLiabilities = Math.abs(liabilities.reduce((sum, a) => sum + a.display_balance, 0))
   const netWorth = totalAssets - totalLiabilities
 
   return { totalAssets, totalLiabilities, netWorth }
+}
+
+/**
+ * Update the market value for an account
+ */
+export async function updateMarketValue(
+  supabase: ReturnType<typeof createClient>,
+  accountId: string,
+  marketValue: number
+): Promise<{ success: boolean; error?: string }> {
+  const { error } = await supabase
+    .from('accounts')
+    .update({
+      market_value: marketValue,
+      market_value_updated_at: new Date().toISOString(),
+    })
+    .eq('id', accountId)
+
+  if (error) {
+    return { success: false, error: error.message }
+  }
+
+  return { success: true }
+}
+
+/**
+ * Clear the market value for an account (revert to cost basis)
+ */
+export async function clearMarketValue(
+  supabase: ReturnType<typeof createClient>,
+  accountId: string
+): Promise<{ success: boolean; error?: string }> {
+  const { error } = await supabase
+    .from('accounts')
+    .update({
+      market_value: null,
+      market_value_updated_at: null,
+    })
+    .eq('id', accountId)
+
+  if (error) {
+    return { success: false, error: error.message }
+  }
+
+  return { success: true }
 }

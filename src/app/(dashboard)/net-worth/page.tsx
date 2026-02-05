@@ -14,6 +14,7 @@ import {
 import { formatCurrency, formatDate } from '@/lib/utils'
 import type { Investment, HomeEntry } from '@/types/database'
 import { getAccountsWithBalances, isLiabilityAccount } from '@/lib/account-balance'
+import { computeNetWorthBuckets, getSnapshots } from '@/lib/net-worth-snapshots'
 
 export default async function NetWorthPage() {
   const supabase = await createClient()
@@ -23,62 +24,10 @@ export default async function NetWorthPage() {
   // NET WORTH: Auto-calculate from accounts
   // ========================================
   const accounts = user ? await getAccountsWithBalances(supabase, user.id) : []
+  const buckets = computeNetWorthBuckets(accounts)
 
-  // Calculate net worth by account type
-  let currentCash = 0
-  let currentInvestments = 0
-  let currentRealEstate = 0
-  let currentCrypto = 0
-  let currentRetirement = 0
-  let currentLiabilities = 0
-
-  for (const account of accounts) {
-    if (!account.is_active) continue
-    const balance = account.current_balance
-
-    if (isLiabilityAccount(account.account_type)) {
-      currentLiabilities += Math.abs(balance)
-    } else {
-      switch (account.account_type) {
-        case 'checking':
-        case 'savings':
-          currentCash += balance
-          break
-        case 'investment':
-          if (account.name.toLowerCase().includes('crypto')) {
-            currentCrypto += balance
-          } else {
-            currentInvestments += balance
-          }
-          break
-        case 'retirement':
-          currentRetirement += balance
-          break
-        default:
-          if (account.name.toLowerCase().includes('crypto')) {
-            currentCrypto += balance
-          } else if (account.name.toLowerCase().includes('house') || account.name.toLowerCase().includes('property') || account.name.toLowerCase().includes('real estate')) {
-            currentRealEstate += balance
-          } else {
-            currentInvestments += balance
-          }
-      }
-    }
-  }
-
-  const latestData = {
-    date: new Date().toISOString(),
-    netWorth: currentCash + currentInvestments + currentRealEstate + currentCrypto + currentRetirement - currentLiabilities,
-    cash: currentCash,
-    investments: currentInvestments,
-    realEstate: currentRealEstate,
-    crypto: currentCrypto,
-    retirement: currentRetirement,
-    liabilities: currentLiabilities,
-  }
-
-  // For now, no historical chart data
-  const chartData: typeof latestData[] = []
+  // Fetch historical snapshots for chart
+  const chartData = user ? await getSnapshots(supabase, user.id) : []
 
   // Get latest investments (for investment holdings table)
   const { data: investments } = await supabase
@@ -112,12 +61,12 @@ export default async function NetWorthPage() {
 
       {/* Summary Cards */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-        <NetWorthCard bucket="cash" value={latestData.cash} />
-        <NetWorthCard bucket="investments" value={latestData.investments} />
-        <NetWorthCard bucket="real_estate" value={latestData.realEstate} />
-        <NetWorthCard bucket="crypto" value={latestData.crypto} />
-        <NetWorthCard bucket="retirement" value={latestData.retirement} />
-        <NetWorthCard bucket="liabilities" value={latestData.liabilities} />
+        <NetWorthCard bucket="cash" value={buckets.cash} />
+        <NetWorthCard bucket="investments" value={buckets.investments} />
+        <NetWorthCard bucket="real_estate" value={buckets.realEstate} />
+        <NetWorthCard bucket="crypto" value={buckets.crypto} />
+        <NetWorthCard bucket="retirement" value={buckets.retirement} />
+        <NetWorthCard bucket="liabilities" value={buckets.liabilities} />
       </div>
 
       {/* Charts */}
@@ -136,11 +85,13 @@ export default async function NetWorthPage() {
               <CardDescription>Your total net worth progression</CardDescription>
             </CardHeader>
             <CardContent>
-              {chartData.length > 0 ? (
+              {chartData.length > 1 ? (
                 <NetWorthChart data={chartData} />
               ) : (
                 <div className="flex items-center justify-center h-[350px] text-muted-foreground text-sm">
-                  Historical net worth tracking coming soon. Current values are shown above.
+                  {chartData.length === 1
+                    ? "First snapshot recorded! The chart will appear once a second snapshot is saved (next day's dashboard visit)."
+                    : 'Net worth history will appear after your next dashboard visit.'}
                 </div>
               )}
             </CardContent>
@@ -154,11 +105,13 @@ export default async function NetWorthPage() {
               <CardDescription>Breakdown of assets over time</CardDescription>
             </CardHeader>
             <CardContent>
-              {chartData.length > 0 ? (
+              {chartData.length > 1 ? (
                 <NetWorthChart data={chartData} stacked />
               ) : (
                 <div className="flex items-center justify-center h-[350px] text-muted-foreground text-sm">
-                  Historical asset breakdown coming soon. Current values are shown above.
+                  {chartData.length === 1
+                    ? "First snapshot recorded! The chart will appear once a second snapshot is saved (next day's dashboard visit)."
+                    : 'Net worth history will appear after your next dashboard visit.'}
                 </div>
               )}
             </CardContent>
@@ -173,7 +126,7 @@ export default async function NetWorthPage() {
           <CardHeader>
             <CardTitle>Investment Holdings</CardTitle>
             <CardDescription>
-              Total: {formatCurrency(investmentTotal || latestData.investments)}
+              Total: {formatCurrency(investmentTotal || buckets.investments)}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -213,7 +166,7 @@ export default async function NetWorthPage() {
           <CardHeader>
             <CardTitle>Real Estate</CardTitle>
             <CardDescription>
-              Total Equity: {formatCurrency(homeEntry?.equity || latestData.realEstate)}
+              Total Equity: {formatCurrency(homeEntry?.equity || buckets.realEstate)}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -275,18 +228,23 @@ export default async function NetWorthPage() {
                       const aIsLiability = isLiabilityAccount(a.account_type)
                       const bIsLiability = isLiabilityAccount(b.account_type)
                       if (aIsLiability !== bIsLiability) return aIsLiability ? 1 : -1
-                      return Math.abs(b.current_balance) - Math.abs(a.current_balance)
+                      return Math.abs(b.display_balance) - Math.abs(a.display_balance)
                     })
                     .map((account) => {
                       const isLiability = isLiabilityAccount(account.account_type)
                       return (
                         <TableRow key={account.id}>
-                          <TableCell className="font-medium">{account.name}</TableCell>
+                          <TableCell className="font-medium">
+                            {account.name}
+                            {account.market_value != null && (
+                              <span className="ml-2 text-xs text-muted-foreground">MV</span>
+                            )}
+                          </TableCell>
                           <TableCell className="capitalize">
                             {account.account_type.replace('_', ' ')}
                           </TableCell>
                           <TableCell className={`text-right font-medium ${isLiability ? 'text-red-500' : 'text-green-600'}`}>
-                            {isLiability ? '-' : ''}{formatCurrency(Math.abs(account.current_balance))}
+                            {isLiability ? '-' : ''}{formatCurrency(Math.abs(account.display_balance))}
                           </TableCell>
                         </TableRow>
                       )
