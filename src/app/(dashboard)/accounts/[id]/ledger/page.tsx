@@ -13,7 +13,9 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
-import { Loader2, ArrowLeft, TrendingUp, TrendingDown, Minus } from 'lucide-react'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Loader2, ArrowLeft, TrendingUp, TrendingDown, Minus, Filter, X } from 'lucide-react'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { getStartingBalance, isLiabilityAccount } from '@/lib/account-balance'
 import type { Account, Transaction, AccountBalance } from '@/types/database'
@@ -33,6 +35,10 @@ export default function AccountLedgerPage({ params }: { params: { id: string } }
   const [startingBalanceRecord, setStartingBalanceRecord] = useState<AccountBalance | null>(null)
   const [transactions, setTransactions] = useState<TransactionWithBalance[]>([])
   const [finalBalance, setFinalBalance] = useState(0)
+
+  // Date filter state
+  const [filterFrom, setFilterFrom] = useState('')
+  const [filterTo, setFilterTo] = useState('')
 
   useEffect(() => {
     loadData()
@@ -115,6 +121,40 @@ export default function AccountLedgerPage({ params }: { params: { id: string } }
   const isLiability = isLiabilityAccount(account.account_type)
   const startingBalance = startingBalanceRecord ? Number(startingBalanceRecord.balance) : 0
 
+  // Filter transactions by date range
+  const isFilterActive = filterFrom || filterTo
+  const filteredTransactions = transactions.filter((t) => {
+    if (filterFrom && t.transaction_date < filterFrom) return false
+    if (filterTo && t.transaction_date > filterTo) return false
+    return true
+  })
+
+  // Diagnostic calculations - use filtered transactions when filter is active
+  const txnsForCalc = isFilterActive ? filteredTransactions : transactions
+  const positiveSum = txnsForCalc.reduce((sum, t) => sum + (t.balance_change > 0 ? t.balance_change : 0), 0)
+  const negativeSum = txnsForCalc.reduce((sum, t) => sum + (t.balance_change < 0 ? t.balance_change : 0), 0)
+  const filteredNetChange = positiveSum + negativeSum
+  const netChange = finalBalance - startingBalance
+
+  // Period starting/ending balances for filtered view
+  // Find the last transaction before the filter range to get period starting balance
+  const txnsBeforeFilter = filterFrom
+    ? transactions.filter((t) => t.transaction_date < filterFrom)
+    : []
+  const periodStartBalance = txnsBeforeFilter.length > 0
+    ? txnsBeforeFilter[txnsBeforeFilter.length - 1].running_balance
+    : startingBalance
+  // Period ending balance is the running balance of the last transaction in the filtered range
+  const periodEndBalance = filteredTransactions.length > 0
+    ? filteredTransactions[filteredTransactions.length - 1].running_balance
+    : periodStartBalance
+
+  // Clear filter helper
+  const clearFilter = () => {
+    setFilterFrom('')
+    setFilterTo('')
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
@@ -131,6 +171,54 @@ export default function AccountLedgerPage({ params }: { params: { id: string } }
           </p>
         </div>
       </div>
+
+      {/* Date Filter */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-medium flex items-center gap-2">
+            <Filter className="h-4 w-4" />
+            Date Range Filter
+          </CardTitle>
+          <CardDescription>
+            Filter to match your statement period for easy comparison
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="space-y-1">
+              <Label htmlFor="filter-from" className="text-xs">From Date</Label>
+              <Input
+                id="filter-from"
+                type="date"
+                value={filterFrom}
+                onChange={(e) => setFilterFrom(e.target.value)}
+                className="w-[160px]"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="filter-to" className="text-xs">To Date</Label>
+              <Input
+                id="filter-to"
+                type="date"
+                value={filterTo}
+                onChange={(e) => setFilterTo(e.target.value)}
+                className="w-[160px]"
+              />
+            </div>
+            {isFilterActive && (
+              <Button variant="ghost" size="sm" onClick={clearFilter}>
+                <X className="h-4 w-4 mr-1" />
+                Clear
+              </Button>
+            )}
+            {isFilterActive && (
+              <div className="text-sm text-muted-foreground">
+                Showing <span className="font-medium text-foreground">{filteredTransactions.length}</span> of {transactions.length} transactions
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Balance Summary */}
       <div className="grid gap-4 md:grid-cols-3">
@@ -181,12 +269,114 @@ export default function AccountLedgerPage({ params }: { params: { id: string } }
         </Card>
       </div>
 
+      {/* Diagnostic Summary */}
+      <Card className="border-amber-500/50 bg-amber-50/50 dark:bg-amber-950/20">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium flex items-center gap-2">
+            <span className="text-amber-600">Balance Diagnostic</span>
+            {isFilterActive && (
+              <Badge variant="outline" className="text-xs">
+                Filtered: {filterFrom || 'start'} to {filterTo || 'end'}
+              </Badge>
+            )}
+          </CardTitle>
+          <CardDescription>
+            {isFilterActive
+              ? `Showing totals for ${filteredTransactions.length} transactions in selected date range`
+              : 'Breakdown to help identify balance discrepancies'}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 text-sm">
+            <div className="p-3 rounded-lg bg-background/80">
+              <div className="text-muted-foreground">Positive Amounts (Debits)</div>
+              <div className="text-xl font-bold text-green-600">+{formatCurrency(positiveSum)}</div>
+              <div className="text-xs text-muted-foreground">
+                {isLiability ? 'Should be: purchases, charges' : 'Should be: deposits, income'}
+              </div>
+            </div>
+            <div className="p-3 rounded-lg bg-background/80">
+              <div className="text-muted-foreground">Negative Amounts (Credits)</div>
+              <div className="text-xl font-bold text-red-500">{formatCurrency(negativeSum)}</div>
+              <div className="text-xs text-muted-foreground">
+                {isLiability ? 'Should be: payments, refunds' : 'Should be: withdrawals, expenses'}
+              </div>
+            </div>
+            <div className="p-3 rounded-lg bg-background/80">
+              <div className="text-muted-foreground">
+                Net Change {isFilterActive && <span className="text-amber-600">(filtered)</span>}
+              </div>
+              <div className={`text-xl font-bold ${filteredNetChange >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                {filteredNetChange >= 0 ? '+' : ''}{formatCurrency(filteredNetChange)}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {isFilterActive
+                  ? `${txnsForCalc.length} transactions in range`
+                  : isLiability
+                    ? filteredNetChange > 0 ? 'Balance increased (more owed)' : 'Balance decreased (paid down)'
+                    : filteredNetChange > 0 ? 'Balance increased' : 'Balance decreased'}
+              </div>
+            </div>
+            <div className="p-3 rounded-lg bg-background/80">
+              <div className="text-muted-foreground">
+                {isFilterActive ? 'Period Balances' : 'Calculation Check'}
+              </div>
+              {isFilterActive ? (
+                <div className="text-sm space-y-1">
+                  <div className="flex justify-between font-mono">
+                    <span className="text-muted-foreground">Start:</span>
+                    <span className="font-semibold">{formatCurrency(periodStartBalance)}</span>
+                  </div>
+                  <div className="flex justify-between font-mono text-xs">
+                    <span className="text-muted-foreground">Change:</span>
+                    <span className={filteredNetChange >= 0 ? 'text-green-600' : 'text-red-500'}>
+                      {filteredNetChange >= 0 ? '+' : ''}{formatCurrency(filteredNetChange)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between font-mono border-t pt-1">
+                    <span className="text-muted-foreground">End:</span>
+                    <span className="font-bold">{formatCurrency(periodEndBalance)}</span>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="text-sm font-mono">
+                    {formatCurrency(startingBalance)} + {netChange >= 0 ? '+' : ''}{formatCurrency(netChange)} = {formatCurrency(finalBalance)}
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    {isLiability
+                      ? `If statement shows different balance, check if purchases are stored as + and payments as -`
+                      : `Starting + Net Change = Current`}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+          {isLiability && (
+            <div className="mt-4 p-3 rounded-lg bg-background/80 text-sm">
+              <strong>For Credit Cards:</strong> Purchases should be stored as <span className="text-green-600">positive</span> (increasing what you owe),
+              and payments should be <span className="text-red-500">negative</span> (decreasing what you owe).
+              If your balance is lower than expected, payments may be counted correctly but purchases might be missing or have wrong signs.
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Transaction Ledger */}
       <Card>
         <CardHeader>
-          <CardTitle>Transaction Ledger</CardTitle>
+          <CardTitle>
+            Transaction Ledger
+            {isFilterActive && (
+              <Badge variant="outline" className="ml-2 text-xs">
+                {filteredTransactions.length} in range
+              </Badge>
+            )}
+          </CardTitle>
           <CardDescription>
-            Each transaction showing how the balance changed
+            {isFilterActive
+              ? `Showing transactions from ${filterFrom || 'start'} to ${filterTo || 'end'}`
+              : 'Each transaction showing how the balance changed'}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -202,24 +392,26 @@ export default function AccountLedgerPage({ params }: { params: { id: string } }
               </TableRow>
             </TableHeader>
             <TableBody>
-              {/* Starting balance row */}
-              <TableRow className="bg-muted/50">
-                <TableCell className="font-medium">
-                  {startingBalanceRecord
-                    ? formatDate(startingBalanceRecord.balance_date)
-                    : '—'}
-                </TableCell>
-                <TableCell className="font-semibold" colSpan={3}>
-                  Starting Balance
-                </TableCell>
-                <TableCell className="text-right">—</TableCell>
-                <TableCell className="text-right font-bold">
-                  {formatCurrency(startingBalance)}
-                </TableCell>
-              </TableRow>
+              {/* Starting balance row - only shown when not filtering */}
+              {!isFilterActive && (
+                <TableRow className="bg-muted/50">
+                  <TableCell className="font-medium">
+                    {startingBalanceRecord
+                      ? formatDate(startingBalanceRecord.balance_date)
+                      : '—'}
+                  </TableCell>
+                  <TableCell className="font-semibold" colSpan={3}>
+                    Starting Balance
+                  </TableCell>
+                  <TableCell className="text-right">—</TableCell>
+                  <TableCell className="text-right font-bold">
+                    {formatCurrency(startingBalance)}
+                  </TableCell>
+                </TableRow>
+              )}
 
               {/* Transaction rows */}
-              {transactions.map((txn, index) => (
+              {(isFilterActive ? filteredTransactions : transactions).map((txn, index) => (
                 <TableRow key={txn.id}>
                   <TableCell className="text-sm">
                     {formatDate(txn.transaction_date)}
@@ -250,31 +442,33 @@ export default function AccountLedgerPage({ params }: { params: { id: string } }
                     </div>
                   </TableCell>
                   <TableCell className="text-right font-medium">
-                    {formatCurrency(txn.running_balance)}
+                    {isFilterActive ? '—' : formatCurrency(txn.running_balance)}
                   </TableCell>
                 </TableRow>
               ))}
 
-              {/* Final balance row */}
-              {transactions.length > 0 && (
+              {/* Final balance/summary row */}
+              {(isFilterActive ? filteredTransactions : transactions).length > 0 && (
                 <TableRow className="bg-muted/50 border-t-2">
                   <TableCell className="font-medium">—</TableCell>
                   <TableCell className="font-semibold" colSpan={3}>
-                    Final Balance
+                    {isFilterActive ? 'Period Total' : 'Final Balance'}
                   </TableCell>
                   <TableCell className="text-right font-bold">
-                    {finalBalance - startingBalance >= 0 ? '+' : ''}{formatCurrency(finalBalance - startingBalance)}
+                    {filteredNetChange >= 0 ? '+' : ''}{formatCurrency(filteredNetChange)}
                   </TableCell>
                   <TableCell className="text-right font-bold text-lg">
-                    {formatCurrency(finalBalance)}
+                    {isFilterActive ? '—' : formatCurrency(finalBalance)}
                   </TableCell>
                 </TableRow>
               )}
 
-              {transactions.length === 0 && (
+              {(isFilterActive ? filteredTransactions : transactions).length === 0 && (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
-                    No transactions linked to this account
+                    {isFilterActive
+                      ? 'No transactions in selected date range'
+                      : 'No transactions linked to this account'}
                   </TableCell>
                 </TableRow>
               )}

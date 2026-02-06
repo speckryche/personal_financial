@@ -19,6 +19,7 @@ interface NetWorthCardProps {
   change?: number
   accountCount?: number
   className?: string
+  label?: string // Optional custom label override
 }
 
 const bucketConfig: Record<
@@ -63,11 +64,12 @@ const bucketConfig: Record<
   },
 }
 
-export function NetWorthCard({ bucket, value, change, accountCount, className }: NetWorthCardProps) {
+export function NetWorthCard({ bucket, value, change, accountCount, className, label }: NetWorthCardProps) {
   const config = bucketConfig[bucket]
   const Icon = config.icon
   const isNegative = bucket === 'liabilities'
   const displayValue = isNegative && value < 0 ? -value : value
+  const displayLabel = label || config.label
 
   return (
     <Link
@@ -89,7 +91,7 @@ export function NetWorthCard({ bucket, value, change, accountCount, className }:
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <p className="text-sm font-medium text-muted-foreground">
-            {config.label}
+            {displayLabel}
           </p>
           {accountCount !== undefined && accountCount > 0 && (
             <span className="text-xs text-muted-foreground/60">

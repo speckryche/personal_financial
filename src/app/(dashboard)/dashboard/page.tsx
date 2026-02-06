@@ -51,6 +51,15 @@ export default async function DashboardPage() {
       : 0
   }
 
+  // Calculate liquid net worth (excludes real estate)
+  const liquidAssets = buckets.cash + buckets.investments + buckets.crypto
+  const liquidNetWorth = liquidAssets - Math.abs(buckets.liabilities)
+
+  // Liquid net worth change (approximate from total change, excluding real estate portion)
+  // For now, use the same percentage as total since we don't track liquid separately in snapshots
+  const liquidChange = netWorthChange
+  const liquidChangePercent = netWorthChangePercent
+
   // Default to previous month
   const now = new Date()
   const prevMonth = subMonths(now, 1)
@@ -74,6 +83,9 @@ export default async function DashboardPage() {
           change={netWorthChange}
           changePercent={netWorthChangePercent}
           miniChartData={miniChartData}
+          liquidNetWorth={liquidNetWorth}
+          liquidChange={liquidChange}
+          liquidChangePercent={liquidChangePercent}
         />
       </div>
 
@@ -112,8 +124,8 @@ export default async function DashboardPage() {
           <NetWorthCard bucket="cash" value={buckets.cash} />
           <NetWorthCard bucket="investments" value={buckets.investments} />
           <NetWorthCard bucket="real_estate" value={buckets.realEstate} />
-          <NetWorthCard bucket="crypto" value={buckets.crypto} />
-          <NetWorthCard bucket="retirement" value={buckets.retirement} />
+          <NetWorthCard bucket="crypto" value={buckets.cryptoPersonal} label="Crypto (personal)" />
+          <NetWorthCard bucket="crypto" value={buckets.cryptoDenet} label="Crypto (Denet)" />
           <NetWorthCard bucket="liabilities" value={buckets.liabilities} />
         </div>
       </div>

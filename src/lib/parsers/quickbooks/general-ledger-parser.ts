@@ -353,8 +353,13 @@ export async function parseGeneralLedgerCSV(csvContent: string): Promise<GLParse
 
     // Check if this is an account section header (account name in first column, rest empty)
     if (firstCell && !firstCell.toLowerCase().startsWith('total') && !distributionAccount) {
-      // Skip deleted accounts entirely
-      if (firstCell.toLowerCase().includes('(deleted)') || firstCell.toLowerCase().includes('deleted')) {
+      // Skip metadata lines that aren't real accounts
+      const firstCellLower = firstCell.toLowerCase()
+      if (firstCellLower.startsWith('accrual basis') ||
+          firstCellLower.startsWith('cash basis') ||
+          firstCellLower.startsWith('general ledger') ||
+          firstCellLower.includes('(deleted)') ||
+          firstCellLower.includes('deleted')) {
         currentAccountName = null // Set to null so transactions under this section are skipped
         skippedCount++
         continue
@@ -435,10 +440,16 @@ export async function parseGeneralLedgerCSV(csvContent: string): Promise<GLParse
     // Determine transaction type
     const txnType = determineTransactionType(amount, currentAccountName || '', splitAccount, transactionType)
 
+    // For liability accounts (credit cards, loans), negate the amount
+    // In QuickBooks GL: debits decrease liabilities, credits increase them
+    // But our balance calc assumes positive = increase, so we flip the sign
+    const { isLiability } = guessAccountType(currentAccountName || '')
+    const adjustedAmount = isLiability ? -amount : amount
+
     const transaction: ParsedGLTransaction = {
       transaction_date: date,
       description: description.substring(0, 500),
-      amount,
+      amount: adjustedAmount,
       transaction_type: txnType,
       memo: memo || null,
       qb_transaction_type: transactionType || null,
@@ -598,8 +609,13 @@ export function parseGeneralLedgerExcel(buffer: ArrayBuffer): GLParseResult {
 
       // Account section header
       if (firstCell && !firstCell.toLowerCase().startsWith('total') && !distributionAccount) {
-        // Skip deleted accounts entirely
-        if (firstCell.toLowerCase().includes('(deleted)') || firstCell.toLowerCase().includes('deleted')) {
+        // Skip metadata lines that aren't real accounts
+        const firstCellLower = firstCell.toLowerCase()
+        if (firstCellLower.startsWith('accrual basis') ||
+            firstCellLower.startsWith('cash basis') ||
+            firstCellLower.startsWith('general ledger') ||
+            firstCellLower.includes('(deleted)') ||
+            firstCellLower.includes('deleted')) {
           currentAccountName = null // Set to null so transactions under this section are skipped
           skippedCount++
           continue
@@ -673,10 +689,16 @@ export function parseGeneralLedgerExcel(buffer: ArrayBuffer): GLParseResult {
       const description = [name, memo].filter(Boolean).join(' - ') || transactionType || 'Unknown'
       const txnType = determineTransactionType(amount, currentAccountName || '', splitAccount, transactionType)
 
+      // For liability accounts (credit cards, loans), negate the amount
+      // In QuickBooks GL: debits decrease liabilities, credits increase them
+      // But our balance calc assumes positive = increase, so we flip the sign
+      const { isLiability } = guessAccountType(currentAccountName || '')
+      const adjustedAmount = isLiability ? -amount : amount
+
       const transaction: ParsedGLTransaction = {
         transaction_date: date,
         description: description.substring(0, 500),
-        amount,
+        amount: adjustedAmount,
         transaction_type: txnType,
         memo: memo || null,
         qb_transaction_type: transactionType || null,

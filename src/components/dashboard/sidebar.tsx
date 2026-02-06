@@ -17,6 +17,8 @@ import {
   X,
   ChevronRight,
   Wallet,
+  CircleAlert,
+  CreditCard,
 } from 'lucide-react'
 import { useState } from 'react'
 import { ThemeToggle } from '@/components/theme-toggle'
@@ -25,8 +27,10 @@ const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Accounts', href: '/accounts', icon: Wallet },
   { name: 'Net Worth', href: '/net-worth', icon: TrendingUp },
+  { name: 'Debt', href: '/debt', icon: CreditCard },
   { name: 'Expenses', href: '/expenses', icon: Receipt },
   { name: 'Income', href: '/income', icon: DollarSign },
+  { name: 'Uncategorized', href: '/uncategorized', icon: CircleAlert },
   { name: 'Imports', href: '/imports', icon: Upload },
   { name: 'Settings', href: '/settings', icon: Settings },
 ]

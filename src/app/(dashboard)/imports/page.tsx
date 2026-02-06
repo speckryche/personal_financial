@@ -18,7 +18,7 @@ import {
 import { createClient } from '@/lib/supabase/client'
 import type { ParsedInvestment } from '@/lib/parsers/quickbooks/investment-parser'
 import type { Account, AccountType } from '@/types/database'
-import { Check, AlertTriangle, Loader2, ChevronDown, ChevronUp } from 'lucide-react'
+import { Check, AlertTriangle, Loader2, ChevronDown, ChevronUp, CalendarDays } from 'lucide-react'
 import {
   PotentialDuplicatesModal,
   type PotentialDuplicate,
@@ -267,6 +267,7 @@ export default function ImportsPage() {
   const [importHistoryKey, setImportHistoryKey] = useState(0)
   const [potentialDuplicates, setPotentialDuplicates] = useState<PotentialDuplicate[]>([])
   const [showDuplicatesModal, setShowDuplicatesModal] = useState(false)
+  const [latestTransactionDate, setLatestTransactionDate] = useState<string | null>(null)
   const { toast } = useToast()
 
   // Load existing accounts for GL import
@@ -302,9 +303,20 @@ export default function ImportsPage() {
     console.log('Classified accounts:', { unmapped: classified.unmapped.length, mapped: classified.mapped.length })
   }, [loadQBMappings])
 
+  const loadLatestTransactionDate = async () => {
+    const { data } = await supabase
+      .from('transactions')
+      .select('transaction_date')
+      .order('transaction_date', { ascending: false })
+      .limit(1)
+      .single()
+    setLatestTransactionDate(data?.transaction_date || null)
+  }
+
   useEffect(() => {
     loadAccounts()
     loadQBMappings()
+    loadLatestTransactionDate()
   }, [])
 
   const refreshImportHistory = () => {
@@ -797,6 +809,21 @@ export default function ImportsPage() {
           Upload your financial data from QuickBooks or Raymond James
         </p>
       </div>
+
+      {latestTransactionDate && (
+        <div className="flex items-center gap-2 rounded-lg border bg-muted/50 px-4 py-3 text-sm">
+          <CalendarDays className="h-4 w-4 text-muted-foreground" />
+          <span className="text-muted-foreground">Most recent transaction:</span>
+          <span className="font-medium">
+            {new Date(latestTransactionDate + 'T00:00:00').toLocaleDateString('en-US', {
+              year: 'numeric',
+              month: 'long',
+              day: 'numeric',
+            })}
+          </span>
+          <span className="text-muted-foreground">— start your next export from this date</span>
+        </div>
+      )}
 
       <Tabs value={activeTab} onValueChange={handleTabChange}>
         <TabsList>

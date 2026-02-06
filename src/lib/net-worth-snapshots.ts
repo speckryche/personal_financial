@@ -7,6 +7,8 @@ export interface NetWorthBuckets {
   investments: number
   realEstate: number
   crypto: number
+  cryptoPersonal: number
+  cryptoDenet: number
   retirement: number
   liabilities: number
   totalAssets: number
@@ -21,12 +23,15 @@ export function computeNetWorthBuckets(accounts: AccountWithBalance[]): NetWorth
   let investments = 0
   let realEstate = 0
   let crypto = 0
+  let cryptoPersonal = 0
+  let cryptoDenet = 0
   let retirement = 0
   let liabilities = 0
 
   for (const account of accounts) {
     if (!account.is_active) continue
     const balance = account.display_balance
+    const nameLower = account.name.toLowerCase()
 
     if (isLiabilityAccount(account.account_type)) {
       liabilities += Math.abs(balance)
@@ -37,8 +42,13 @@ export function computeNetWorthBuckets(accounts: AccountWithBalance[]): NetWorth
           cash += balance
           break
         case 'investment':
-          if (account.name.toLowerCase().includes('crypto')) {
+          if (nameLower.includes('crypto')) {
             crypto += balance
+            if (nameLower.includes('denet')) {
+              cryptoDenet += balance
+            } else {
+              cryptoPersonal += balance
+            }
           } else {
             investments += balance
           }
@@ -47,12 +57,17 @@ export function computeNetWorthBuckets(accounts: AccountWithBalance[]): NetWorth
           retirement += balance
           break
         default:
-          if (account.name.toLowerCase().includes('crypto')) {
+          if (nameLower.includes('crypto')) {
             crypto += balance
+            if (nameLower.includes('denet')) {
+              cryptoDenet += balance
+            } else {
+              cryptoPersonal += balance
+            }
           } else if (
-            account.name.toLowerCase().includes('house') ||
-            account.name.toLowerCase().includes('property') ||
-            account.name.toLowerCase().includes('real estate')
+            nameLower.includes('house') ||
+            nameLower.includes('property') ||
+            nameLower.includes('real estate')
           ) {
             realEstate += balance
           } else {
@@ -65,7 +80,7 @@ export function computeNetWorthBuckets(accounts: AccountWithBalance[]): NetWorth
   const totalAssets = cash + investments + realEstate + crypto + retirement
   const netWorth = totalAssets - liabilities
 
-  return { cash, investments, realEstate, crypto, retirement, liabilities, totalAssets, netWorth }
+  return { cash, investments, realEstate, crypto, cryptoPersonal, cryptoDenet, retirement, liabilities, totalAssets, netWorth }
 }
 
 /**

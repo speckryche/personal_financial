@@ -42,6 +42,10 @@ export interface Account {
   qb_account_names: string[]
   market_value: number | null
   market_value_updated_at: string | null
+  interest_rate: number | null
+  minimum_payment: number | null
+  target_payoff_date: string | null
+  payoff_priority: number | null
   created_at: string
   updated_at: string
 }
