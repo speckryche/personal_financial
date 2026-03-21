@@ -69,18 +69,32 @@ export default function AccountLedgerPage({ params }: { params: { id: string } }
     const startDate = startingBalance?.balance_date || null
 
     // Get all transactions for this account, sorted by date (oldest first)
-    let query = supabase
-      .from('transactions')
-      .select('*')
-      .eq('account_id', accountId)
-      .order('transaction_date', { ascending: true })
-      .order('created_at', { ascending: true })
+    // Supabase has a hard 1000 row limit, so we must paginate
+    const allTxnData: any[] = []
+    let offset = 0
+    const batchSize = 1000
 
-    if (startDate) {
-      query = query.gte('transaction_date', startDate)
+    while (true) {
+      let query = supabase
+        .from('transactions')
+        .select('*')
+        .eq('account_id', accountId)
+        .order('transaction_date', { ascending: true })
+        .order('created_at', { ascending: true })
+
+      if (startDate) {
+        query = query.gte('transaction_date', startDate)
+      }
+
+      const { data: batch } = await query.range(offset, offset + batchSize - 1)
+
+      if (!batch || batch.length === 0) break
+      allTxnData.push(...batch)
+      if (batch.length < batchSize) break
+      offset += batchSize
     }
 
-    const { data: txnData } = await query
+    const txnData = allTxnData
 
     // Calculate running balance for each transaction
     let runningBalance = startBalance

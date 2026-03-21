@@ -22,7 +22,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/use-toast'
-import { Loader2, Trash2, FileSpreadsheet, AlertTriangle } from 'lucide-react'
+import { Loader2, Trash2, FileSpreadsheet, AlertTriangle, ClipboardList } from 'lucide-react'
+import { ImportAuditSummary, type AccountSummary } from './import-audit-summary'
 
 interface ImportBatchStats {
   minDate: string | null
@@ -33,6 +34,13 @@ interface ImportBatchStats {
   duplicatesSkipped: number
 }
 
+interface ImportBatchMetadata {
+  accountSummaries?: AccountSummary[]
+  duplicatesSkipped?: number
+  ignoredFromSkippedAccounts?: number
+  [key: string]: unknown
+}
+
 interface ImportBatch {
   id: string
   filename: string
@@ -41,6 +49,7 @@ interface ImportBatch {
   record_count: number
   status: 'pending' | 'processing' | 'completed' | 'failed'
   error_message: string | null
+  metadata: ImportBatchMetadata | null
   stats: ImportBatchStats
 }
 
@@ -60,6 +69,8 @@ export function ImportHistory({ fileType = 'quickbooks_transactions', onImportDe
   const [clearAllConfirmText, setClearAllConfirmText] = useState('')
   const [deleting, setDeleting] = useState(false)
   const [clearingAll, setClearingAll] = useState(false)
+  const [auditModalOpen, setAuditModalOpen] = useState(false)
+  const [auditImport, setAuditImport] = useState<ImportBatch | null>(null)
 
   useEffect(() => {
     loadImports()
@@ -91,6 +102,11 @@ export function ImportHistory({ fileType = 'quickbooks_transactions', onImportDe
     setSelectedImport(importBatch)
     setConfirmText('')
     setDeleteModalOpen(true)
+  }
+
+  const openAuditModal = (importBatch: ImportBatch) => {
+    setAuditImport(importBatch)
+    setAuditModalOpen(true)
   }
 
   const closeDeleteModal = () => {
@@ -314,7 +330,7 @@ export function ImportHistory({ fileType = 'quickbooks_transactions', onImportDe
               <TableHead className="text-right">Income</TableHead>
               <TableHead className="text-right">Expenses</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead className="w-16"></TableHead>
+              <TableHead className="w-24"></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -349,14 +365,27 @@ export function ImportHistory({ fileType = 'quickbooks_transactions', onImportDe
                   {getStatusBadge(importBatch.status)}
                 </TableCell>
                 <TableCell>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
-                    onClick={() => openDeleteModal(importBatch)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                  <div className="flex items-center gap-1">
+                    {importBatch.metadata?.accountSummaries && importBatch.metadata.accountSummaries.length > 0 && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+                        onClick={() => openAuditModal(importBatch)}
+                        title="View Audit Summary"
+                      >
+                        <ClipboardList className="h-4 w-4" />
+                      </Button>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+                      onClick={() => openDeleteModal(importBatch)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </TableCell>
               </TableRow>
             ))}
@@ -479,6 +508,39 @@ export function ImportHistory({ fileType = 'quickbooks_transactions', onImportDe
                 <Trash2 className="mr-2 h-4 w-4" />
               )}
               Clear All Data
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Audit Summary Modal */}
+      <Dialog open={auditModalOpen} onOpenChange={setAuditModalOpen}>
+        <DialogContent className="max-w-5xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ClipboardList className="h-5 w-5" />
+              Import Audit Summary
+            </DialogTitle>
+            <DialogDescription>
+              {auditImport && (
+                <>
+                  <span className="font-medium">{auditImport.filename}</span>
+                  {' - '}
+                  {format(new Date(auditImport.created_at), 'MMM d, yyyy h:mm a')}
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-4">
+            {auditImport?.metadata?.accountSummaries && (
+              <ImportAuditSummary accountSummaries={auditImport.metadata.accountSummaries} />
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAuditModalOpen(false)}>
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>

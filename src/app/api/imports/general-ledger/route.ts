@@ -3,10 +3,10 @@ import {
   parseGeneralLedgerCSV,
   parseGeneralLedgerExcel,
 } from '@/lib/parsers/quickbooks/general-ledger-parser'
-import { findCategoryForTransaction } from '@/lib/categorization'
+import { findCategoryForTransaction, getTransactionType, getFromQBAccountMapping } from '@/lib/categorization'
 import { findAccountForQBName, isLiabilityAccount, isAssetAccount } from '@/lib/account-balance'
 import { NextResponse } from 'next/server'
-import type { Category, Account, QBIgnoredAccount } from '@/types/database'
+import type { Category, Account, QBIgnoredAccount, QBAccountMapping } from '@/types/database'
 
 // Build a unique key for exact duplicate detection
 function buildTransactionKey(date: string, amount: number, description: string, account: string | null): string {
@@ -123,7 +123,7 @@ export async function POST(request: Request) {
       ((ignoredData || []) as QBIgnoredAccount[]).map(a => a.qb_account_name.toLowerCase())
     )
 
-    // Fetch transaction type mappings
+    // Fetch transaction type mappings (legacy)
     const { data: typeMappingsData } = await supabase
       .from('transaction_type_mappings')
       .select('qb_transaction_type, mapped_type')
@@ -133,6 +133,32 @@ export async function POST(request: Request) {
     for (const m of typeMappingsData || []) {
       typeMappings.set(m.qb_transaction_type.toLowerCase(), m.mapped_type as 'income' | 'expense')
     }
+
+    // Fetch QB Account Mappings (new system - takes priority)
+    const { data: qbMappingsData } = await supabase
+      .from('qb_account_mappings')
+      .select('*')
+      .eq('user_id', user.id)
+
+    const qbAccountMappings: QBAccountMapping[] = qbMappingsData || []
+
+    // Build a set of mapped QB account names for quick lookup
+    const mappedQBAccounts = new Set(
+      qbAccountMappings.map((m) => m.qb_account_name.toLowerCase().trim())
+    )
+
+    // Check for unmapped accounts before proceeding
+    const unmappedAccounts = new Set<string>()
+    for (const t of result.transactions) {
+      const qbAccount = t.qb_account?.toLowerCase().trim()
+      if (qbAccount && !mappedQBAccounts.has(qbAccount) && !ignoredAccounts.has(qbAccount)) {
+        unmappedAccounts.add(t.qb_account || '')
+      }
+    }
+
+    // If there are unmapped accounts, return a warning (but still allow import)
+    // The user should map these accounts for proper categorization
+    const hasUnmappedAccounts = unmappedAccounts.size > 0
 
     // Create import batch
     const { data: importBatch, error: batchError } = await supabase
@@ -192,25 +218,44 @@ export async function POST(request: Request) {
         return true
       })
       .map((t) => {
-        // Determine transaction type from user's mappings first, fall back to parser's guess
-        const qbType = t.qb_transaction_type?.toLowerCase() || ''
-        const mappedType = typeMappings.get(qbType)
-        const transactionType = mappedType || t.transaction_type
+        // Determine transaction type and category:
+        // Priority 1: QB Account Mappings table (new system - explicit user mappings)
+        // Priority 2: Legacy type mappings by QB transaction type
+        // Priority 3: Category mapping from qb_category_names on categories table
+        // Priority 4: QB account number prefix (4xxx=income, etc.)
+        // Priority 5: Fall back to parser's guess based on transaction type
 
-        // Auto-categorize: try split_account first (the QB category), then qb_account
-        // In GL format, split_account contains the category (e.g., "Groceries", "Dining")
-        // This matches the logic in /api/transactions/categorize
-        let categoryId = findCategoryForTransaction(
-          t.split_account,
-          t.qb_transaction_type,
-          categories
-        )
-        if (!categoryId) {
+        let transactionType = t.transaction_type
+        let categoryId: string | null = null
+
+        // Try QB Account Mapping first (by qb_account)
+        const qbMapping = getFromQBAccountMapping(t.qb_account, qbAccountMappings)
+        if (qbMapping) {
+          transactionType = qbMapping.transaction_type
+          categoryId = qbMapping.category_id
+        } else {
+          // Fall back to legacy logic
+          const qbType = t.qb_transaction_type?.toLowerCase() || ''
+          const mappedType = typeMappings.get(qbType)
+          transactionType = mappedType
+            || getTransactionType(t.split_account, t.qb_transaction_type, categories)
+            || getTransactionType(t.qb_account, t.qb_transaction_type, categories)
+            || t.transaction_type
+
+          // Auto-categorize: try split_account first (the QB category), then qb_account
+          // In GL format, split_account contains the category (e.g., "Groceries", "Dining")
           categoryId = findCategoryForTransaction(
-            t.qb_account,
+            t.split_account,
             t.qb_transaction_type,
             categories
           )
+          if (!categoryId) {
+            categoryId = findCategoryForTransaction(
+              t.qb_account,
+              t.qb_transaction_type,
+              categories
+            )
+          }
         }
 
         // Try to link to account via qb_account first, then split_account
@@ -352,6 +397,59 @@ export async function POST(request: Request) {
       }
     }
 
+    // Build account summaries for audit purposes
+    // Determine the type for each discovered account based on QB account mappings
+    const accountSummaries = result.discoveredAccounts.map(acc => {
+      // Check if this account is ignored
+      if (ignoredAccounts.has(acc.name.toLowerCase())) {
+        return {
+          name: acc.name,
+          type: 'ignored' as const,
+          beginningBalance: acc.beginningBalance,
+          totalDebits: acc.totalDebits,
+          totalCredits: acc.totalCredits,
+          netChange: acc.netChange,
+          endingBalance: acc.endingBalance,
+          transactionCount: acc.transactionCount,
+        }
+      }
+
+      // Check QB Account Mappings for explicit mapping
+      const qbMapping = qbAccountMappings.find(
+        m => m.qb_account_name.toLowerCase().trim() === acc.name.toLowerCase().trim()
+      )
+
+      let accountType: 'income' | 'expense' | 'transfer' | 'ignored' = 'transfer'
+
+      if (qbMapping) {
+        accountType = qbMapping.transaction_type as 'income' | 'expense' | 'transfer'
+      } else if (acc.isIncomeExpenseCategory) {
+        // Use QB account number prefix convention
+        const match = acc.name.match(/^(\d)/)
+        if (match) {
+          if (match[1] === '4') {
+            accountType = 'income'
+          } else if (['5', '6', '7', '8', '9'].includes(match[1])) {
+            accountType = 'expense'
+          }
+        } else {
+          // Default to expense for non-numbered income/expense categories
+          accountType = 'expense'
+        }
+      }
+
+      return {
+        name: acc.name,
+        type: accountType,
+        beginningBalance: acc.beginningBalance,
+        totalDebits: acc.totalDebits,
+        totalCredits: acc.totalCredits,
+        netChange: acc.netChange,
+        endingBalance: acc.endingBalance,
+        transactionCount: acc.transactionCount,
+      }
+    })
+
     // Update batch status to completed
     await supabase
       .from('import_batches')
@@ -365,6 +463,7 @@ export async function POST(request: Request) {
           ignoredFromSkippedAccounts,
           potentialDuplicatesCount: potentialDuplicates.length,
           discoveredAccounts: result.discoveredAccounts.length,
+          accountSummaries,
           errors: result.errors,
         },
       })
@@ -380,6 +479,12 @@ export async function POST(request: Request) {
       discoveredAccounts: result.discoveredAccounts.length,
       errors: result.errors,
       potentialDuplicates,
+      // QB Account Mappings info
+      hasUnmappedAccounts,
+      unmappedAccountsCount: unmappedAccounts.size,
+      unmappedAccounts: Array.from(unmappedAccounts).slice(0, 20), // First 20 for display
+      // Audit summary data
+      accountSummaries,
     })
   } catch (error) {
     console.error('GL Import error:', error)

@@ -121,16 +121,30 @@ export async function calculateCurrentBalance(
   const startingDate = manualBalance?.balance_date || null
 
   // Get transactions for this account
-  let query = supabase
-    .from('transactions')
-    .select('transaction_date, amount')
-    .eq('account_id', accountId)
+  // Supabase has a hard 1000 row limit, so we must paginate
+  const allTransactions: { transaction_date: string; amount: number }[] = []
+  let offset = 0
+  const batchSize = 1000
 
-  if (startingDate) {
-    query = query.gte('transaction_date', startingDate)
+  while (true) {
+    let query = supabase
+      .from('transactions')
+      .select('transaction_date, amount')
+      .eq('account_id', accountId)
+
+    if (startingDate) {
+      query = query.gte('transaction_date', startingDate)
+    }
+
+    const { data: batch } = await query.range(offset, offset + batchSize - 1)
+
+    if (!batch || batch.length === 0) break
+    allTransactions.push(...(batch as any))
+    if (batch.length < batchSize) break
+    offset += batchSize
   }
 
-  const { data: transactions } = await query
+  const transactions = allTransactions
 
   return calculateAccountBalance(
     startingBalance,
@@ -182,16 +196,30 @@ export async function getAccountsWithBalances(
     const startingDate = startingBalanceRecord?.balance_date || null
 
     // Query transactions for this account after starting date
-    let query = supabase
-      .from('transactions')
-      .select('amount')
-      .eq('account_id', account.id)
+    // Supabase has a hard 1000 row limit, so we must paginate
+    const accountTransactions: { amount: number }[] = []
+    let txOffset = 0
+    const txBatchSize = 1000
 
-    if (startingDate) {
-      query = query.gte('transaction_date', startingDate)
+    while (true) {
+      let query = supabase
+        .from('transactions')
+        .select('amount')
+        .eq('account_id', account.id)
+
+      if (startingDate) {
+        query = query.gte('transaction_date', startingDate)
+      }
+
+      const { data: batch } = await query.range(txOffset, txOffset + txBatchSize - 1)
+
+      if (!batch || batch.length === 0) break
+      accountTransactions.push(...(batch as any))
+      if (batch.length < txBatchSize) break
+      txOffset += txBatchSize
     }
 
-    const { data: transactions, count } = await query
+    const transactions = accountTransactions
 
     const transactionSum = (transactions || []).reduce((sum, t) => sum + Number(t.amount), 0)
     const currentBalance = startingBalance + transactionSum

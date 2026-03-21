@@ -33,7 +33,7 @@ import { useToast } from '@/components/ui/use-toast'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { getSubcategoriesForMapping } from '@/lib/category-utils'
 import { startOfMonth, endOfMonth, format, subMonths } from 'date-fns'
-import { Loader2 } from 'lucide-react'
+import { Loader2, Download } from 'lucide-react'
 import { DateRangePicker, type DateRange } from '@/components/ui/date-range-picker'
 import {
   aggregateByParentCategory,
@@ -224,6 +224,43 @@ export default function ExpensesPage() {
     return `${startStr} - ${endStr}`
   }
 
+  // Export categories table to CSV
+  const exportToCSV = () => {
+    if (expensesByCategory.length === 0) return
+
+    const headers = ['Category', 'Transactions', 'Amount', '% of Total']
+    const rows = expensesByCategory.map((category) => {
+      const percentage = totalExpenses > 0
+        ? ((category.total / totalExpenses) * 100).toFixed(1)
+        : '0.0'
+      return [
+        category.name,
+        category.count.toString(),
+        category.total.toFixed(2),
+        percentage,
+      ]
+    })
+
+    // Add totals row
+    rows.push(['TOTAL', transactions.length.toString(), totalExpenses.toFixed(2), '100.0'])
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map((row) => row.map((cell) => `"${cell}"`).join(',')),
+    ].join('\n')
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const link = document.createElement('a')
+    const url = URL.createObjectURL(blob)
+    link.setAttribute('href', url)
+    const filename = `expenses-${viewTier === 'parent' ? 'categories' : 'subcategories'}-${format(dateRange.start, 'yyyy-MM-dd')}-to-${format(dateRange.end, 'yyyy-MM-dd')}.csv`
+    link.setAttribute('download', filename)
+    link.style.visibility = 'hidden'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -331,14 +368,29 @@ export default function ExpensesPage() {
         {/* All Categories Table */}
         <Card>
           <CardHeader>
-            <CardTitle>
-              {viewTier === 'parent' ? 'All Categories' : 'All Subcategories'}
-            </CardTitle>
-            <CardDescription>
-              {viewTier === 'parent'
-                ? 'Complete breakdown by parent category'
-                : 'Complete breakdown by subcategory'}
-            </CardDescription>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>
+                  {viewTier === 'parent' ? 'All Categories' : 'All Subcategories'}
+                </CardTitle>
+                <CardDescription>
+                  {viewTier === 'parent'
+                    ? 'Complete breakdown by parent category'
+                    : 'Complete breakdown by subcategory'}
+                </CardDescription>
+              </div>
+              {expensesByCategory.length > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={exportToCSV}
+                  className="shrink-0"
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  Export CSV
+                </Button>
+              )}
+            </div>
           </CardHeader>
           <CardContent>
             {expensesByCategory.length > 0 ? (

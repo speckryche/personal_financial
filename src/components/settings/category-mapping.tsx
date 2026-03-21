@@ -86,20 +86,35 @@ export function CategoryMapping({ categories, onCategoriesUpdate }: CategoryMapp
     setLoading(true)
 
     // Get all unique qb_account values and their counts (Account full name column)
-    const { data: transactions, error } = await supabase
-      .from('transactions')
-      .select('qb_account, qb_transaction_type, category_id')
-      .not('qb_account', 'is', null)
+    // Supabase has a hard 1000 row limit, so we must paginate
+    const allTransactions: { qb_account: string | null; qb_transaction_type: string | null; category_id: string | null }[] = []
+    let offset = 0
+    const batchSize = 1000
 
-    if (error) {
-      toast({
-        title: 'Error loading QB accounts',
-        description: error.message,
-        variant: 'destructive',
-      })
-      setLoading(false)
-      return
+    while (true) {
+      const { data: batch, error: batchError } = await supabase
+        .from('transactions')
+        .select('qb_account, qb_transaction_type, category_id')
+        .not('qb_account', 'is', null)
+        .range(offset, offset + batchSize - 1)
+
+      if (batchError) {
+        toast({
+          title: 'Error loading QB accounts',
+          description: batchError.message,
+          variant: 'destructive',
+        })
+        setLoading(false)
+        return
+      }
+
+      if (!batch || batch.length === 0) break
+      allTransactions.push(...batch)
+      if (batch.length < batchSize) break
+      offset += batchSize
     }
+
+    const transactions = allTransactions
 
     // Aggregate the data
     const accountMap = new Map<
@@ -151,11 +166,12 @@ export function CategoryMapping({ categories, onCategoriesUpdate }: CategoryMapp
       })
     })
 
-    // Filter out balance sheet accounts (those starting with numbers like "1505 Credit Card")
-    // These are asset/liability accounts from GL imports, not expense categories
+    // Filter out balance sheet accounts (1xxx, 2xxx, 3xxx = Assets, Liabilities, Equity)
+    // but keep income (4xxx) and expense (5xxx, 6xxx, 7xxx, 8xxx, 9xxx) accounts
     const filteredAccounts = qbAccountsWithMappings.filter(a => {
-      // Skip accounts that start with a digit (balance sheet accounts from GL)
-      return !/^\d/.test(a.accountName)
+      // Skip accounts starting with 1, 2, or 3 (balance sheet accounts)
+      // Keep accounts starting with 4-9 (income/expense) and non-numeric accounts
+      return !/^[123]\d/.test(a.accountName)
     })
 
     // Sort by uncategorized count (highest first), then by total count

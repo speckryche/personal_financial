@@ -31,18 +31,33 @@ export async function POST(request: Request) {
     }
 
     // Fetch all transactions that don't have an account_id
-    const { data: transactions, error: fetchError } = await supabase
-      .from('transactions')
-      .select('id, qb_account, split_account, amount, transaction_type')
-      .eq('user_id', user.id)
-      .is('account_id', null)
+    // Supabase has a hard 1000 row limit, so we must paginate
+    const allTransactions: any[] = []
+    let offset = 0
+    const batchSize = 1000
 
-    if (fetchError) {
-      return NextResponse.json(
-        { error: 'Failed to fetch transactions', details: fetchError.message },
-        { status: 500 }
-      )
+    while (true) {
+      const { data: batch, error: batchError } = await supabase
+        .from('transactions')
+        .select('id, qb_account, split_account, amount, transaction_type')
+        .eq('user_id', user.id)
+        .is('account_id', null)
+        .range(offset, offset + batchSize - 1)
+
+      if (batchError) {
+        return NextResponse.json(
+          { error: 'Failed to fetch transactions', details: batchError.message },
+          { status: 500 }
+        )
+      }
+
+      if (!batch || batch.length === 0) break
+      allTransactions.push(...batch)
+      if (batch.length < batchSize) break
+      offset += batchSize
     }
+
+    const transactions = allTransactions
 
     if (!transactions || transactions.length === 0) {
       return NextResponse.json({
@@ -57,11 +72,11 @@ export async function POST(request: Request) {
     let linkedViaSplit = 0
 
     // Process transactions in batches
-    const batchSize = 100
-    for (let i = 0; i < transactions.length; i += batchSize) {
-      const batch = transactions.slice(i, i + batchSize)
+    const processBatchSize = 100
+    for (let i = 0; i < transactions.length; i += processBatchSize) {
+      const processBatch = transactions.slice(i, i + processBatchSize)
 
-      for (const txn of batch) {
+      for (const txn of processBatch) {
         // Try to link via qb_account first
         let linkedAccount = findAccountForQBName(txn.qb_account, accounts)
         let linkedViaSplitAccount = false

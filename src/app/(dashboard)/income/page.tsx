@@ -33,7 +33,7 @@ import { useToast } from '@/components/ui/use-toast'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { getSubcategoriesForMapping } from '@/lib/category-utils'
 import { startOfMonth, endOfMonth, format, subMonths } from 'date-fns'
-import { Loader2 } from 'lucide-react'
+import { Loader2, Download } from 'lucide-react'
 import { DateRangePicker, type DateRange } from '@/components/ui/date-range-picker'
 import {
   aggregateByParentCategory,
@@ -105,9 +105,9 @@ export default function IncomePage() {
     setLoading(false)
   }
 
-  // Calculate totals
-  const totalIncome = transactions.reduce((sum, t) => sum + Number(t.amount), 0)
-  const lastMonthIncome = lastMonthTransactions.reduce((sum, t) => sum + Number(t.amount), 0)
+  // Calculate totals (use absolute value since income may be stored as negative)
+  const totalIncome = transactions.reduce((sum, t) => sum + Math.abs(Number(t.amount)), 0)
+  const lastMonthIncome = lastMonthTransactions.reduce((sum, t) => sum + Math.abs(Number(t.amount)), 0)
   const monthOverMonthChange = lastMonthIncome > 0 ? ((totalIncome - lastMonthIncome) / lastMonthIncome) * 100 : 0
 
   // Aggregate by category based on view tier
@@ -217,6 +217,43 @@ export default function IncomePage() {
       return startStr
     }
     return `${startStr} - ${endStr}`
+  }
+
+  // Export categories table to CSV
+  const exportToCSV = () => {
+    if (incomeByCategory.length === 0) return
+
+    const headers = ['Category', 'Transactions', 'Amount', '% of Total']
+    const rows = incomeByCategory.map((category) => {
+      const percentage = totalIncome > 0
+        ? ((category.total / totalIncome) * 100).toFixed(1)
+        : '0.0'
+      return [
+        category.name,
+        category.count.toString(),
+        category.total.toFixed(2),
+        percentage,
+      ]
+    })
+
+    // Add totals row
+    rows.push(['TOTAL', transactions.length.toString(), totalIncome.toFixed(2), '100.0'])
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map((row) => row.map((cell) => `"${cell}"`).join(',')),
+    ].join('\n')
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const link = document.createElement('a')
+    const url = URL.createObjectURL(blob)
+    link.setAttribute('href', url)
+    const filename = `income-${viewTier === 'parent' ? 'sources' : 'subcategories'}-${format(dateRange.start, 'yyyy-MM-dd')}-to-${format(dateRange.end, 'yyyy-MM-dd')}.csv`
+    link.setAttribute('download', filename)
+    link.style.visibility = 'hidden'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
   }
 
   if (loading) {
@@ -333,14 +370,29 @@ export default function IncomePage() {
         {/* All Categories Table */}
         <Card>
           <CardHeader>
-            <CardTitle>
-              {viewTier === 'parent' ? 'All Income Sources' : 'All Subcategories'}
-            </CardTitle>
-            <CardDescription>
-              {viewTier === 'parent'
-                ? 'Complete breakdown by parent category'
-                : 'Complete breakdown by subcategory'}
-            </CardDescription>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>
+                  {viewTier === 'parent' ? 'All Income Sources' : 'All Subcategories'}
+                </CardTitle>
+                <CardDescription>
+                  {viewTier === 'parent'
+                    ? 'Complete breakdown by parent category'
+                    : 'Complete breakdown by subcategory'}
+                </CardDescription>
+              </div>
+              {incomeByCategory.length > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={exportToCSV}
+                  className="shrink-0"
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  Export CSV
+                </Button>
+              )}
+            </div>
           </CardHeader>
           <CardContent>
             {incomeByCategory.length > 0 ? (

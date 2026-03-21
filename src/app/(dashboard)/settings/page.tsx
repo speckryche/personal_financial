@@ -34,8 +34,9 @@ import { useToast } from '@/components/ui/use-toast'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Plus, Trash2, Loader2, ChevronRight, AlertTriangle, Pencil, ChevronDown, Eye, EyeOff } from 'lucide-react'
 import { formatCurrency } from '@/lib/utils'
-import { CategoryMapping } from '@/components/settings/category-mapping'
 import { DuplicateCleanup } from '@/components/settings/duplicate-cleanup'
+import { TransactionSummary } from '@/components/settings/transaction-summary'
+import { QBAccountMappings } from '@/components/settings/qb-account-mappings'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -1275,21 +1276,37 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
 
-        {/* QuickBooks Category Mappings Tab */}
+        {/* QuickBooks Account Mappings Tab */}
         <TabsContent value="qb-mappings" className="space-y-4">
           <Card>
             <CardHeader>
               <div>
-                <CardTitle>Category Mappings</CardTitle>
+                <CardTitle>Transaction Summary</CardTitle>
                 <CardDescription>
-                  Map QuickBooks account names to your expense categories for automatic categorization
+                  Overview of all transactions in the database by type
                 </CardDescription>
               </div>
             </CardHeader>
             <CardContent>
-              <CategoryMapping categories={categories} onCategoriesUpdate={loadData} />
+              <TransactionSummary />
             </CardContent>
           </Card>
+
+          <Card>
+            <CardHeader>
+              <div>
+                <CardTitle>QB Account Mappings</CardTitle>
+                <CardDescription>
+                  Map each QuickBooks Account Name to a transaction type (income/expense/transfer) and category.
+                  This is the single source of truth for categorization.
+                </CardDescription>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <QBAccountMappings categories={categories} onMappingsUpdate={loadData} />
+            </CardContent>
+          </Card>
+
         </TabsContent>
 
         {/* Duplicate Cleanup Tab */}

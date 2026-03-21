@@ -35,10 +35,12 @@ export async function POST() {
   const accountNames = liabilityAccounts.map(a => `${a.name} (${a.account_type})`)
 
   // Get all transactions for these accounts
+  // Use range to overcome Supabase's default 1000 row limit
   const { data: transactions, error: txnError } = await supabase
     .from('transactions')
     .select('id, amount, account_id')
     .in('account_id', accountIds)
+    .range(0, 49999)
 
   if (txnError) {
     return NextResponse.json({ error: txnError.message }, { status: 500 })

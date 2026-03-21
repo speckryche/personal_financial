@@ -19,11 +19,13 @@ export async function POST() {
     }
 
     // Get all unique qb_account values from transactions
+    // Use range to overcome Supabase's default 1000 row limit
     const { data: transactions } = await supabase
       .from('transactions')
       .select('qb_account, transaction_type')
       .eq('user_id', user.id)
       .not('qb_account', 'is', null)
+      .range(0, 49999)
 
     if (!transactions || transactions.length === 0) {
       return NextResponse.json({

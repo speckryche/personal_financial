@@ -31,21 +31,34 @@ export async function POST(request: NextRequest) {
     const categories: Category[] = categoriesData || []
 
     // Fetch transactions - either uncategorized only, or ALL with qb_account or split_account
-    let query = supabase
-      .from('transactions')
-      .select('id, qb_account, split_account, qb_transaction_type')
-      .eq('user_id', user.id)
+    // Supabase has a hard 1000 row limit, so we must paginate
+    const allTransactions: { id: string; qb_account: string | null; split_account: string | null; qb_transaction_type: string | null }[] = []
+    let offset = 0
+    const batchSize = 1000
 
-    if (!recategorizeAll) {
-      // Only uncategorized transactions
-      query = query.is('category_id', null)
+    while (true) {
+      let query = supabase
+        .from('transactions')
+        .select('id, qb_account, split_account, qb_transaction_type')
+        .eq('user_id', user.id)
+
+      if (!recategorizeAll) {
+        query = query.is('category_id', null)
+      }
+
+      const { data: batch, error: batchError } = await query.range(offset, offset + batchSize - 1)
+
+      if (batchError) {
+        return NextResponse.json({ error: 'Failed to fetch transactions' }, { status: 500 })
+      }
+
+      if (!batch || batch.length === 0) break
+      allTransactions.push(...batch)
+      if (batch.length < batchSize) break
+      offset += batchSize
     }
 
-    const { data: transactions, error: transactionsError } = await query
-
-    if (transactionsError) {
-      return NextResponse.json({ error: 'Failed to fetch transactions' }, { status: 500 })
-    }
+    const transactions = allTransactions
 
     // Filter to only transactions with qb_account or split_account
     const transactionsWithQB = (transactions || []).filter(

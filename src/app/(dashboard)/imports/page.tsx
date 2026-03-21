@@ -23,6 +23,10 @@ import {
   PotentialDuplicatesModal,
   type PotentialDuplicate,
 } from '@/components/imports/potential-duplicates-modal'
+import {
+  ImportAuditSummary,
+  type AccountSummary,
+} from '@/components/imports/import-audit-summary'
 import { Badge } from '@/components/ui/badge'
 import {
   Select,
@@ -267,7 +271,9 @@ export default function ImportsPage() {
   const [importHistoryKey, setImportHistoryKey] = useState(0)
   const [potentialDuplicates, setPotentialDuplicates] = useState<PotentialDuplicate[]>([])
   const [showDuplicatesModal, setShowDuplicatesModal] = useState(false)
+  const [auditSummary, setAuditSummary] = useState<AccountSummary[] | null>(null)
   const [latestTransactionDate, setLatestTransactionDate] = useState<string | null>(null)
+  const [isBackfilling, setIsBackfilling] = useState(false)
   const { toast } = useToast()
 
   // Load existing accounts for GL import
@@ -321,6 +327,37 @@ export default function ImportsPage() {
 
   const refreshImportHistory = () => {
     setImportHistoryKey((prev) => prev + 1)
+  }
+
+  // One-time backfill for existing imports without audit summaries
+  const handleBackfillAuditSummaries = async () => {
+    setIsBackfilling(true)
+    try {
+      const response = await fetch('/api/imports/backfill-audit-summaries', {
+        method: 'POST',
+      })
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Backfill failed')
+      }
+
+      const backfilled = result.results?.filter((r: { status: string }) => r.status === 'backfilled').length || 0
+      toast({
+        title: 'Backfill complete',
+        description: `Updated ${backfilled} import(s) with audit summaries.`,
+      })
+
+      refreshImportHistory()
+    } catch (error) {
+      toast({
+        title: 'Backfill failed',
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'destructive',
+      })
+    } finally {
+      setIsBackfilling(false)
+    }
   }
 
   const handleFileSelect = async (file: File) => {
@@ -670,6 +707,11 @@ export default function ImportsPage() {
         uncategorizedCount: result.uncategorizedCount || 0,
       })
 
+      // Store audit summary if available
+      if (result.accountSummaries) {
+        setAuditSummary(result.accountSummaries)
+      }
+
       // Clear pending mappings after successful import
       setPendingCategoryMappings({})
       // Refresh the import history
@@ -747,6 +789,7 @@ export default function ImportsPage() {
     setUploadResult(null)
     setPendingCategoryMappings({})
     setPotentialDuplicates([])
+    setAuditSummary(null)
   }
 
   const handleTabChange = (value: string) => {
@@ -1239,6 +1282,24 @@ export default function ImportsPage() {
                   )}
                 </div>
               )}
+
+              {/* Audit Summary - shown after successful import */}
+              {uploadResult?.success && auditSummary && auditSummary.length > 0 && (
+                <ImportAuditSummary accountSummaries={auditSummary} />
+              )}
+
+              {/* One-time backfill button for existing imports */}
+              <div className="flex items-center justify-end">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleBackfillAuditSummaries}
+                  disabled={isBackfilling}
+                >
+                  {isBackfilling && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Backfill Audit Summaries
+                </Button>
+              </div>
 
               <ImportHistory
                 key={`gl-${importHistoryKey}`}

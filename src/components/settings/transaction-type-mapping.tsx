@@ -45,20 +45,35 @@ export function TransactionTypeMapping() {
     setLoading(true)
 
     // Get all unique qb_transaction_type values and their counts
-    const { data: transactions, error } = await supabase
-      .from('transactions')
-      .select('qb_transaction_type')
-      .not('qb_transaction_type', 'is', null)
+    // Supabase has a hard 1000 row limit, so we must paginate
+    const allTransactions: { qb_transaction_type: string | null }[] = []
+    let offset = 0
+    const batchSize = 1000
 
-    if (error) {
-      toast({
-        title: 'Error loading transaction types',
-        description: error.message,
-        variant: 'destructive',
-      })
-      setLoading(false)
-      return
+    while (true) {
+      const { data: batch, error: batchError } = await supabase
+        .from('transactions')
+        .select('qb_transaction_type')
+        .not('qb_transaction_type', 'is', null)
+        .range(offset, offset + batchSize - 1)
+
+      if (batchError) {
+        toast({
+          title: 'Error loading transaction types',
+          description: batchError.message,
+          variant: 'destructive',
+        })
+        setLoading(false)
+        return
+      }
+
+      if (!batch || batch.length === 0) break
+      allTransactions.push(...batch)
+      if (batch.length < batchSize) break
+      offset += batchSize
     }
+
+    const transactions = allTransactions
 
     // Aggregate counts
     const typeCounts = new Map<string, number>()

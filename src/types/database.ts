@@ -186,6 +186,11 @@ export interface Database {
         Insert: Omit<QBIgnoredAccount, 'id' | 'created_at'>
         Update: Partial<Omit<QBIgnoredAccount, 'id' | 'created_at'>>
       }
+      qb_account_mappings: {
+        Row: QBAccountMapping
+        Insert: Omit<QBAccountMapping, 'id' | 'created_at' | 'updated_at'>
+        Update: Partial<Omit<QBAccountMapping, 'id' | 'created_at' | 'updated_at'>>
+      }
     }
     Enums: {
       net_worth_bucket: NetWorthBucket
@@ -217,6 +222,16 @@ export interface QBAccountClassification {
   qb_account_name: string
   classification: 'income' | 'expense'
   created_at: string
+}
+
+export interface QBAccountMapping {
+  id: string
+  user_id: string
+  qb_account_name: string
+  transaction_type: TransactionType
+  category_id: string | null
+  created_at: string
+  updated_at: string
 }
 
 // Crypto types (from external Supabase)

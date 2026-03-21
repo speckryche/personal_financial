@@ -57,20 +57,35 @@ export function AccountMapping({ accounts, onAccountsUpdate }: AccountMappingPro
 
     // Get all unique qb_account values from transactions
     // This is the "Account full name" column which identifies WHERE the money is
-    const { data: transactions, error } = await supabase
-      .from('transactions')
-      .select('qb_account, qb_transaction_type, account_id')
-      .not('qb_account', 'is', null)
+    // Supabase has a hard 1000 row limit, so we must paginate
+    const allTransactions: { qb_account: string | null; qb_transaction_type: string | null; account_id: string | null }[] = []
+    let offset = 0
+    const batchSize = 1000
 
-    if (error) {
-      toast({
-        title: 'Error loading QB accounts',
-        description: error.message,
-        variant: 'destructive',
-      })
-      setLoading(false)
-      return
+    while (true) {
+      const { data: batch, error: batchError } = await supabase
+        .from('transactions')
+        .select('qb_account, qb_transaction_type, account_id')
+        .not('qb_account', 'is', null)
+        .range(offset, offset + batchSize - 1)
+
+      if (batchError) {
+        toast({
+          title: 'Error loading QB accounts',
+          description: batchError.message,
+          variant: 'destructive',
+        })
+        setLoading(false)
+        return
+      }
+
+      if (!batch || batch.length === 0) break
+      allTransactions.push(...batch)
+      if (batch.length < batchSize) break
+      offset += batchSize
     }
+
+    const transactions = allTransactions
 
     // Aggregate the data
     const accountMap = new Map<

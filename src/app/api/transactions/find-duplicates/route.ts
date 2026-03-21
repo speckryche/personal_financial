@@ -40,11 +40,31 @@ export async function GET() {
     }
 
     // Fetch all transactions for the user
-    const { data: transactions, error } = await supabase
-      .from('transactions')
-      .select('id, transaction_date, description, memo, amount, qb_account, split_account, import_batch_id, created_at')
-      .eq('user_id', user.id)
-      .order('transaction_date', { ascending: false })
+    // Supabase has a hard 1000 row limit, so we must paginate
+    const allTransactions: any[] = []
+    let offset = 0
+    const batchSize = 1000
+
+    while (true) {
+      const { data: batch, error: batchError } = await supabase
+        .from('transactions')
+        .select('id, transaction_date, description, memo, amount, qb_account, split_account, import_batch_id, created_at')
+        .eq('user_id', user.id)
+        .order('transaction_date', { ascending: false })
+        .range(offset, offset + batchSize - 1)
+
+      if (batchError) {
+        return NextResponse.json({ error: 'Failed to fetch transactions' }, { status: 500 })
+      }
+
+      if (!batch || batch.length === 0) break
+      allTransactions.push(...batch)
+      if (batch.length < batchSize) break
+      offset += batchSize
+    }
+
+    const transactions = allTransactions
+    const error = null
 
     if (error) {
       return NextResponse.json({ error: 'Failed to fetch transactions' }, { status: 500 })
