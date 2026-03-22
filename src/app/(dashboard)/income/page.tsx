@@ -269,7 +269,7 @@ export default function IncomePage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Income</h1>
-          <p className="text-muted-foreground">
+          <p className="text-base font-medium text-muted-foreground">
             Track your income sources
           </p>
         </div>
@@ -306,7 +306,7 @@ export default function IncomePage() {
             <div className="text-3xl font-bold text-green-500">
               {formatCurrency(totalIncome)}
             </div>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-sm font-medium text-muted-foreground">
               {monthOverMonthChange !== 0 && (
                 <span className={monthOverMonthChange >= 0 ? 'text-green-500' : 'text-red-500'}>
                   {monthOverMonthChange >= 0 ? '+' : ''}{monthOverMonthChange.toFixed(1)}% from previous period
@@ -325,7 +325,7 @@ export default function IncomePage() {
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold">{uniqueSources || 0}</div>
-            <p className="text-xs text-muted-foreground">Active sources</p>
+            <p className="text-sm font-medium text-muted-foreground">Active sources</p>
           </CardContent>
         </Card>
 
@@ -337,7 +337,7 @@ export default function IncomePage() {
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold">{incomeByCategory[0]?.name || '-'}</div>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-sm font-medium text-muted-foreground">
               {incomeByCategory[0] ? formatCurrency(incomeByCategory[0].total) : '-'}
             </p>
           </CardContent>
@@ -360,7 +360,7 @@ export default function IncomePage() {
             {chartData.length > 0 ? (
               <IncomeBarChart data={chartData} />
             ) : (
-              <div className="flex items-center justify-center h-[300px] text-muted-foreground text-sm">
+              <div className="flex items-center justify-center h-[300px] text-muted-foreground text-base font-medium">
                 No income recorded this month
               </div>
             )}
@@ -426,7 +426,7 @@ export default function IncomePage() {
                         <TableCell className="text-right">
                           <button
                             onClick={() => openCategoryTransactions(category.id, category.name)}
-                            className="text-muted-foreground hover:text-foreground hover:underline transition-colors"
+                            className="font-medium text-muted-foreground hover:text-foreground hover:underline transition-colors"
                           >
                             {category.count}
                           </button>
@@ -443,7 +443,7 @@ export default function IncomePage() {
                 </TableBody>
               </Table>
             ) : (
-              <div className="flex items-center justify-center h-[200px] text-muted-foreground text-sm">
+              <div className="flex items-center justify-center h-[200px] text-muted-foreground text-base font-medium">
                 No income sources yet
               </div>
             )}

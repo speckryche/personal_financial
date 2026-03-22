@@ -85,7 +85,7 @@ export function Sidebar() {
         onMouseEnter={() => setIsExpanded(true)}
         onMouseLeave={() => setIsExpanded(false)}
         className={cn(
-          'hidden lg:flex fixed left-0 top-0 z-40 h-screen flex-col border-r bg-card/80 backdrop-blur-xl transition-all duration-300 ease-out',
+          'hidden lg:flex fixed left-0 top-0 z-40 h-screen flex-col border-r bg-card/95 backdrop-blur-xl transition-all duration-300 ease-out',
           isExpanded ? 'w-60' : 'w-[72px]'
         )}
       >

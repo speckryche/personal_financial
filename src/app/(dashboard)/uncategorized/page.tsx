@@ -291,7 +291,7 @@ export default function UncategorizedPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Uncategorized Transactions</h1>
-          <p className="text-muted-foreground">
+          <p className="text-base font-medium text-muted-foreground">
             Review and assign categories to transactions that haven&apos;t been categorized yet
           </p>
         </div>
@@ -336,7 +336,7 @@ export default function UncategorizedPage() {
                 </>
               )}
             </div>
-            <p className="text-xs text-muted-foreground">transactions need categories</p>
+            <p className="text-sm font-medium text-muted-foreground">transactions need categories</p>
           </CardContent>
         </Card>
 
@@ -350,11 +350,11 @@ export default function UncategorizedPage() {
             <div className="flex gap-4">
               <div>
                 <span className="text-2xl font-bold text-green-600">{incomeCount}</span>
-                <p className="text-xs text-muted-foreground">income</p>
+                <p className="text-sm font-medium text-muted-foreground">income</p>
               </div>
               <div>
                 <span className="text-2xl font-bold text-red-500">{expenseCount}</span>
-                <p className="text-xs text-muted-foreground">expense</p>
+                <p className="text-sm font-medium text-muted-foreground">expense</p>
               </div>
             </div>
           </CardContent>
@@ -368,7 +368,7 @@ export default function UncategorizedPage() {
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold">{formatCurrency(totalAmount)}</div>
-            <p className="text-xs text-muted-foreground">needs categorization</p>
+            <p className="text-sm font-medium text-muted-foreground">needs categorization</p>
           </CardContent>
         </Card>
       </div>
@@ -610,7 +610,7 @@ export default function UncategorizedPage() {
                             {txn.description || txn.memo || 'No description'}
                           </div>
                           {txn.qb_account && (
-                            <div className="text-xs text-muted-foreground truncate">
+                            <div className="text-sm font-medium text-muted-foreground truncate">
                               QB: {txn.qb_account}
                             </div>
                           )}
@@ -619,7 +619,7 @@ export default function UncategorizedPage() {
                           {txn.account ? (
                             <span className="text-sm">{txn.account.name}</span>
                           ) : (
-                            <span className="text-sm text-muted-foreground">—</span>
+                            <span className="text-sm font-medium text-muted-foreground">—</span>
                           )}
                         </TableCell>
                         <TableCell>

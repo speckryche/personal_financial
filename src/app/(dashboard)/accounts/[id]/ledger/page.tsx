@@ -180,7 +180,7 @@ export default function AccountLedgerPage({ params }: { params: { id: string } }
         </Link>
         <div>
           <h1 className="text-3xl font-bold tracking-tight">{account.name} Ledger</h1>
-          <p className="text-muted-foreground">
+          <p className="text-base font-medium text-muted-foreground">
             Transaction-by-transaction balance detail
           </p>
         </div>
@@ -303,27 +303,27 @@ export default function AccountLedgerPage({ params }: { params: { id: string } }
         <CardContent>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 text-sm">
             <div className="p-3 rounded-lg bg-background/80">
-              <div className="text-muted-foreground">Positive Amounts (Debits)</div>
+              <div className="font-medium text-muted-foreground">Positive Amounts (Debits)</div>
               <div className="text-xl font-bold text-green-600">+{formatCurrency(positiveSum)}</div>
-              <div className="text-xs text-muted-foreground">
+              <div className="text-sm font-medium text-muted-foreground">
                 {isLiability ? 'Should be: purchases, charges' : 'Should be: deposits, income'}
               </div>
             </div>
             <div className="p-3 rounded-lg bg-background/80">
-              <div className="text-muted-foreground">Negative Amounts (Credits)</div>
+              <div className="font-medium text-muted-foreground">Negative Amounts (Credits)</div>
               <div className="text-xl font-bold text-red-500">{formatCurrency(negativeSum)}</div>
-              <div className="text-xs text-muted-foreground">
+              <div className="text-sm font-medium text-muted-foreground">
                 {isLiability ? 'Should be: payments, refunds' : 'Should be: withdrawals, expenses'}
               </div>
             </div>
             <div className="p-3 rounded-lg bg-background/80">
-              <div className="text-muted-foreground">
+              <div className="font-medium text-muted-foreground">
                 Net Change {isFilterActive && <span className="text-amber-600">(filtered)</span>}
               </div>
               <div className={`text-xl font-bold ${filteredNetChange >= 0 ? 'text-green-600' : 'text-red-500'}`}>
                 {filteredNetChange >= 0 ? '+' : ''}{formatCurrency(filteredNetChange)}
               </div>
-              <div className="text-xs text-muted-foreground">
+              <div className="text-sm font-medium text-muted-foreground">
                 {isFilterActive
                   ? `${txnsForCalc.length} transactions in range`
                   : isLiability
@@ -332,7 +332,7 @@ export default function AccountLedgerPage({ params }: { params: { id: string } }
               </div>
             </div>
             <div className="p-3 rounded-lg bg-background/80">
-              <div className="text-muted-foreground">
+              <div className="font-medium text-muted-foreground">
                 {isFilterActive ? 'Period Balances' : 'Calculation Check'}
               </div>
               {isFilterActive ? (
@@ -357,7 +357,7 @@ export default function AccountLedgerPage({ params }: { params: { id: string } }
                   <div className="text-sm font-mono">
                     {formatCurrency(startingBalance)} + {netChange >= 0 ? '+' : ''}{formatCurrency(netChange)} = {formatCurrency(finalBalance)}
                   </div>
-                  <div className="text-xs text-muted-foreground mt-1">
+                  <div className="text-sm font-medium text-muted-foreground mt-1">
                     {isLiability
                       ? `If statement shows different balance, check if purchases are stored as + and payments as -`
                       : `Starting + Net Change = Current`}
@@ -433,10 +433,10 @@ export default function AccountLedgerPage({ params }: { params: { id: string } }
                   <TableCell className="max-w-[200px] truncate">
                     {txn.description || txn.memo || 'No description'}
                   </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">
+                  <TableCell className="text-sm font-medium text-muted-foreground">
                     {txn.split_account || '—'}
                   </TableCell>
-                  <TableCell className="text-xs text-muted-foreground max-w-[150px] truncate">
+                  <TableCell className="text-sm font-medium text-muted-foreground max-w-[150px] truncate">
                     {txn.qb_account || '—'}
                   </TableCell>
                   <TableCell className="text-right">

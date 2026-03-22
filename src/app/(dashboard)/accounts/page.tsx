@@ -222,7 +222,7 @@ export default function AccountsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Accounts</h1>
-        <p className="text-muted-foreground">
+        <p className="text-base font-medium text-muted-foreground">
           Track your account balances and net worth
         </p>
       </div>
@@ -238,7 +238,7 @@ export default function AccountsPage() {
             <div className="text-2xl font-bold text-green-600">
               {formatCurrency(totalAssets)}
             </div>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-sm font-medium text-muted-foreground">
               {assets.length} active account{assets.length !== 1 ? 's' : ''}
             </p>
           </CardContent>
@@ -253,7 +253,7 @@ export default function AccountsPage() {
             <div className="text-2xl font-bold text-red-500">
               -{formatCurrency(totalLiabilities)}
             </div>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-sm font-medium text-muted-foreground">
               {liabilities.length} active account{liabilities.length !== 1 ? 's' : ''}
             </p>
           </CardContent>
@@ -268,7 +268,7 @@ export default function AccountsPage() {
             <div className={`text-2xl font-bold ${netWorth >= 0 ? 'text-green-600' : 'text-red-500'}`}>
               {formatCurrency(netWorth)}
             </div>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-sm font-medium text-muted-foreground">
               Assets - Liabilities
             </p>
           </CardContent>
@@ -308,7 +308,7 @@ export default function AccountsPage() {
                           <AccountIcon type={account.account_type} />
                           <div>
                             <div className="font-medium">{account.name}</div>
-                            <div className="text-xs text-muted-foreground capitalize">
+                            <div className="text-sm font-medium text-muted-foreground capitalize">
                               {account.account_type.replace('_', ' ')}
                               {account.institution && ` • ${account.institution}`}
                             </div>
@@ -322,13 +322,13 @@ export default function AccountsPage() {
                               {formatCurrency(account.display_balance)}
                             </span>
                             {account.market_value != null && (
-                              <div className="text-xs text-muted-foreground">
+                              <div className="text-sm text-muted-foreground">
                                 MV {account.market_value_updated_at && `· ${formatDate(account.market_value_updated_at)}`}
                               </div>
                             )}
                           </div>
                         ) : (
-                          <span className="text-muted-foreground text-sm">Not set</span>
+                          <span className="text-muted-foreground text-sm font-medium">Not set</span>
                         )}
                       </TableCell>
                     </TableRow>
@@ -375,7 +375,7 @@ export default function AccountsPage() {
                           <AccountIcon type={account.account_type} />
                           <div>
                             <div className="font-medium">{account.name}</div>
-                            <div className="text-xs text-muted-foreground capitalize">
+                            <div className="text-sm font-medium text-muted-foreground capitalize">
                               {account.account_type.replace('_', ' ')}
                               {account.institution && ` • ${account.institution}`}
                             </div>
@@ -389,13 +389,13 @@ export default function AccountsPage() {
                               -{formatCurrency(Math.abs(account.display_balance))}
                             </span>
                             {account.market_value != null && (
-                              <div className="text-xs text-muted-foreground">
+                              <div className="text-sm text-muted-foreground">
                                 MV {account.market_value_updated_at && `· ${formatDate(account.market_value_updated_at)}`}
                               </div>
                             )}
                           </div>
                         ) : (
-                          <span className="text-muted-foreground text-sm">Not set</span>
+                          <span className="text-muted-foreground text-sm font-medium">Not set</span>
                         )}
                       </TableCell>
                     </TableRow>
@@ -435,7 +435,7 @@ export default function AccountsPage() {
                 {/* Balance Info */}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="p-4 rounded-lg bg-muted/50">
-                    <div className="text-sm text-muted-foreground">
+                    <div className="text-sm font-medium text-muted-foreground">
                       {selectedAccount.account.market_value != null ? 'Market Value' : 'Current Balance'}
                     </div>
                     <div className={`text-2xl font-bold ${
@@ -450,13 +450,13 @@ export default function AccountsPage() {
                         : 'Not set'}
                     </div>
                     {selectedAccount.account.market_value_updated_at && (
-                      <div className="text-xs text-muted-foreground">
+                      <div className="text-sm text-muted-foreground">
                         Updated {formatDate(selectedAccount.account.market_value_updated_at)}
                       </div>
                     )}
                   </div>
                   <div className="p-4 rounded-lg bg-muted/50">
-                    <div className="text-sm text-muted-foreground">
+                    <div className="text-sm font-medium text-muted-foreground">
                       {selectedAccount.account.market_value != null ? 'Cost Basis' : 'Starting Balance'}
                     </div>
                     <div className="text-xl font-semibold">
@@ -467,7 +467,7 @@ export default function AccountsPage() {
                           : 'Not set')}
                     </div>
                     {selectedAccount.account.market_value == null && selectedAccount.account.starting_balance_date && (
-                      <div className="text-xs text-muted-foreground">
+                      <div className="text-sm text-muted-foreground">
                         as of {formatDate(selectedAccount.account.starting_balance_date)}
                       </div>
                     )}
@@ -594,7 +594,7 @@ export default function AccountsPage() {
               />
             </div>
             {selectedAccount && selectedAccount.account.starting_balance !== null && (
-              <p className="text-xs text-muted-foreground">
+              <p className="text-sm font-medium text-muted-foreground">
                 Cost basis (calculated): {formatCurrency(selectedAccount.account.current_balance)}
               </p>
             )}
@@ -633,7 +633,7 @@ export default function AccountsPage() {
                 onChange={(e) => setBalanceEntry({ ...balanceEntry, balance: e.target.value })}
               />
               {selectedAccount && isLiabilityAccount(selectedAccount.account.account_type) && (
-                <p className="text-xs text-muted-foreground">
+                <p className="text-sm font-medium text-muted-foreground">
                   Enter as positive number (amount owed)
                 </p>
               )}

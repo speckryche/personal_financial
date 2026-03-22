@@ -54,7 +54,7 @@ export default async function NetWorthPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Net Worth</h1>
-        <p className="text-muted-foreground">
+        <p className="text-base font-medium text-muted-foreground">
           Detailed breakdown of your assets and liabilities
         </p>
       </div>
@@ -88,7 +88,7 @@ export default async function NetWorthPage() {
               {chartData.length > 1 ? (
                 <NetWorthChart data={chartData} />
               ) : (
-                <div className="flex items-center justify-center h-[350px] text-muted-foreground text-sm">
+                <div className="flex items-center justify-center h-[350px] text-muted-foreground text-base font-medium">
                   {chartData.length === 1
                     ? "First snapshot recorded! The chart will appear once a second snapshot is saved (next day's dashboard visit)."
                     : 'Net worth history will appear after your next dashboard visit.'}
@@ -108,7 +108,7 @@ export default async function NetWorthPage() {
               {chartData.length > 1 ? (
                 <NetWorthChart data={chartData} stacked />
               ) : (
-                <div className="flex items-center justify-center h-[350px] text-muted-foreground text-sm">
+                <div className="flex items-center justify-center h-[350px] text-muted-foreground text-base font-medium">
                   {chartData.length === 1
                     ? "First snapshot recorded! The chart will appear once a second snapshot is saved (next day's dashboard visit)."
                     : 'Net worth history will appear after your next dashboard visit.'}
@@ -173,15 +173,15 @@ export default async function NetWorthPage() {
             {homeEntry ? (
               <div className="space-y-4">
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Property</span>
+                  <span className="font-medium text-muted-foreground">Property</span>
                   <span className="font-medium">{homeEntry.property_name}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Home Value</span>
+                  <span className="font-medium text-muted-foreground">Home Value</span>
                   <span className="font-medium">{formatCurrency(Number(homeEntry.home_value))}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Mortgage Balance</span>
+                  <span className="font-medium text-muted-foreground">Mortgage Balance</span>
                   <span className="font-medium text-red-500">
                     -{formatCurrency(Number(homeEntry.mortgage_balance))}
                   </span>
@@ -192,7 +192,7 @@ export default async function NetWorthPage() {
                     {formatCurrency(Number(homeEntry.equity))}
                   </span>
                 </div>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-sm font-medium text-muted-foreground">
                   As of {formatDate(homeEntry.entry_date)}
                 </p>
               </div>
@@ -237,7 +237,7 @@ export default async function NetWorthPage() {
                           <TableCell className="font-medium">
                             {account.name}
                             {account.market_value != null && (
-                              <span className="ml-2 text-xs text-muted-foreground">MV</span>
+                              <span className="ml-2 text-sm font-medium text-muted-foreground">MV</span>
                             )}
                           </TableCell>
                           <TableCell className="capitalize">

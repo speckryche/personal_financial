@@ -132,7 +132,7 @@ export default function DebtPage() {
       {/* Header */}
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Debt Freedom</h1>
-        <p className="text-muted-foreground">
+        <p className="text-base font-medium text-muted-foreground">
           Track your debts and plan your path to financial freedom
         </p>
       </div>
@@ -170,7 +170,7 @@ export default function DebtPage() {
                   {change <= 0 ? '' : '+'}{changePercent.toFixed(1)}%
                 </span>
               )}
-              <span className="text-muted-foreground">vs last month</span>
+              <span className="font-medium text-muted-foreground">vs last month</span>
             </div>
           </CardContent>
         </HoverCard>
@@ -190,7 +190,7 @@ export default function DebtPage() {
             <div className="text-2xl font-bold font-mono tracking-tight">
               {formatCurrency(totalMinimums)}
             </div>
-            <p className="text-xs text-muted-foreground mt-1">
+            <p className="text-sm font-medium text-muted-foreground mt-1">
               {totalMonthlyInterest > 0 && (
                 <>~{formatCurrency(totalMonthlyInterest)} goes to interest</>
               )}
@@ -213,7 +213,7 @@ export default function DebtPage() {
             <div className="text-2xl font-bold font-mono tracking-tight">
               {weightedAPR > 0 ? `${weightedAPR.toFixed(2)}%` : 'N/A'}
             </div>
-            <p className="text-xs text-muted-foreground mt-1">
+            <p className="text-sm font-medium text-muted-foreground mt-1">
               {debts.filter(d => d.interest_rate != null).length} of {debts.length} with rates set
             </p>
           </CardContent>
@@ -223,7 +223,7 @@ export default function DebtPage() {
       {/* Strategy Badge */}
       {debts.length > 0 && (
         <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">Payoff strategy:</span>
+          <span className="text-sm font-medium text-muted-foreground">Payoff strategy:</span>
           <Badge variant="outline" className="capitalize">
             {getEffectiveStrategy(debts) === 'manual' ? 'Custom Priority' : 'Avalanche (Highest APR First)'}
           </Badge>
@@ -246,7 +246,7 @@ export default function DebtPage() {
         <div className="text-center py-12">
           <CreditCard className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
           <h3 className="text-lg font-medium mb-2">No debt accounts found</h3>
-          <p className="text-muted-foreground text-sm max-w-md mx-auto">
+          <p className="text-muted-foreground text-base font-medium max-w-md mx-auto">
             You don&apos;t have any liability accounts (credit cards, loans, mortgages) set up.
             Add them in the Accounts page to start tracking your debt payoff progress.
           </p>
@@ -257,7 +257,7 @@ export default function DebtPage() {
       {debts.length > 0 && (
         <div className="mt-8 p-6 rounded-2xl bg-muted/30 border border-muted">
           <h3 className="text-lg font-semibold mb-3">Debt Freedom Tips</h3>
-          <ul className="space-y-2 text-sm text-muted-foreground">
+          <ul className="space-y-2 text-base text-muted-foreground">
             <li className="flex items-start gap-2">
               <span className="text-primary">1.</span>
               <span>

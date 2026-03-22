@@ -71,7 +71,7 @@ export default async function DashboardPage() {
       {/* Header */}
       <div className="animate-fade-in-up">
         <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
-        <p className="text-muted-foreground">
+        <p className="text-base font-medium text-muted-foreground">
           Your financial overview at a glance
         </p>
       </div>
@@ -112,10 +112,10 @@ export default async function DashboardPage() {
       {/* Asset Breakdown */}
       <div className="space-y-4 animate-fade-in-up stagger-2 opacity-0">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Asset Breakdown</h2>
+          <h2 className="text-xl font-bold">Asset Breakdown</h2>
           <Link
             href="/net-worth"
-            className="flex items-center gap-1 text-sm text-muted-foreground hover:text-primary transition-colors"
+            className="flex items-center gap-1 text-sm font-semibold text-muted-foreground hover:text-primary transition-colors"
           >
             View all <ArrowRight className="h-4 w-4" />
           </Link>
@@ -142,7 +142,7 @@ export default async function DashboardPage() {
             </div>
             <Link
               href="/net-worth"
-              className="flex items-center gap-1 text-sm text-muted-foreground hover:text-primary transition-colors"
+              className="flex items-center gap-1 text-sm font-semibold text-muted-foreground hover:text-primary transition-colors"
             >
               View details <ArrowRight className="h-4 w-4" />
             </Link>
@@ -152,7 +152,7 @@ export default async function DashboardPage() {
           {chartData.length > 1 ? (
             <NetWorthChart data={chartData} />
           ) : (
-            <div className="flex items-center justify-center h-[350px] text-muted-foreground text-sm">
+            <div className="flex items-center justify-center h-[350px] text-muted-foreground text-base font-medium">
               {chartData.length === 1
                 ? "First snapshot recorded! The chart will appear once a second snapshot is saved (next day's visit)."
                 : 'Net worth history will appear after your next visit.'}

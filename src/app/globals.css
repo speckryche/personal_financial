@@ -5,56 +5,56 @@
 @layer base {
   :root {
     /* Core colors - Light mode */
-    --background: 0 0% 98%;
+    --background: 0 0% 96%;
     --foreground: 224 71% 4%;
     --card: 0 0% 100%;
     --card-foreground: 224 71% 4%;
     --popover: 0 0% 100%;
     --popover-foreground: 224 71% 4%;
 
-    /* Primary - Emerald */
-    --primary: 160 84% 39%;
+    /* Primary - Emerald (darkened for text contrast) */
+    --primary: 160 84% 30%;
     --primary-foreground: 0 0% 100%;
 
     /* Secondary */
-    --secondary: 220 14% 96%;
+    --secondary: 220 14% 94%;
     --secondary-foreground: 224 71% 4%;
 
-    /* Muted */
-    --muted: 220 14% 96%;
-    --muted-foreground: 220 9% 46%;
+    /* Muted (darkened for sunlight readability) */
+    --muted: 220 14% 94%;
+    --muted-foreground: 220 12% 34%;
 
     /* Accent */
-    --accent: 160 84% 39%;
+    --accent: 160 84% 30%;
     --accent-foreground: 0 0% 100%;
 
     /* Destructive */
-    --destructive: 0 84% 60%;
+    --destructive: 0 84% 50%;
     --destructive-foreground: 0 0% 100%;
 
-    /* Border and input */
-    --border: 220 13% 91%;
-    --input: 220 13% 91%;
-    --ring: 160 84% 39%;
+    /* Border and input (stronger borders) */
+    --border: 220 13% 82%;
+    --input: 220 13% 82%;
+    --ring: 160 84% 30%;
     --radius: 0.75rem;
 
-    /* Semantic colors */
-    --positive: 142 76% 36%;
+    /* Semantic colors (darkened for readability) */
+    --positive: 142 76% 30%;
     --positive-foreground: 0 0% 100%;
-    --negative: 0 84% 60%;
+    --negative: 0 84% 48%;
     --negative-foreground: 0 0% 100%;
 
-    /* Net worth bucket colors */
-    --cash: 142 76% 36%;
-    --investments: 217 91% 60%;
-    --real-estate: 45 93% 47%;
-    --crypto: 271 91% 65%;
-    --retirement: 199 89% 48%;
-    --liabilities: 0 72% 51%;
+    /* Net worth bucket colors (darkened for text use) */
+    --cash: 142 76% 30%;
+    --investments: 217 91% 50%;
+    --real-estate: 45 93% 40%;
+    --crypto: 271 91% 55%;
+    --retirement: 199 89% 40%;
+    --liabilities: 0 72% 45%;
 
-    /* Glassmorphism variables */
-    --glass-bg: 0 0% 100% / 0.7;
-    --glass-border: 0 0% 100% / 0.2;
+    /* Glassmorphism variables (more opaque for readability) */
+    --glass-bg: 0 0% 100% / 0.92;
+    --glass-border: 220 13% 82% / 0.6;
     --glass-highlight: 0 0% 100% / 0.5;
     --glass-blur: 20px;
 
@@ -73,55 +73,55 @@
   .dark {
     /* Core colors - Dark mode */
     --background: 224 71% 4%;
-    --foreground: 213 31% 91%;
-    --card: 224 71% 6%;
-    --card-foreground: 213 31% 91%;
-    --popover: 224 71% 6%;
-    --popover-foreground: 213 31% 91%;
+    --foreground: 210 40% 96%;
+    --card: 224 71% 7%;
+    --card-foreground: 210 40% 96%;
+    --popover: 224 71% 7%;
+    --popover-foreground: 210 40% 96%;
 
     /* Primary - Emerald */
-    --primary: 160 84% 45%;
+    --primary: 160 84% 50%;
     --primary-foreground: 224 71% 4%;
 
     /* Secondary */
-    --secondary: 215 28% 17%;
-    --secondary-foreground: 213 31% 91%;
+    --secondary: 215 28% 18%;
+    --secondary-foreground: 210 40% 96%;
 
-    /* Muted */
-    --muted: 215 28% 17%;
-    --muted-foreground: 215 20% 65%;
+    /* Muted (brightened for dark mode readability) */
+    --muted: 215 28% 18%;
+    --muted-foreground: 215 20% 75%;
 
     /* Accent */
-    --accent: 160 84% 45%;
+    --accent: 160 84% 50%;
     --accent-foreground: 224 71% 4%;
 
     /* Destructive */
-    --destructive: 0 62% 50%;
+    --destructive: 0 62% 55%;
     --destructive-foreground: 0 0% 100%;
 
-    /* Border and input */
-    --border: 215 28% 17%;
-    --input: 215 28% 17%;
-    --ring: 160 84% 45%;
+    /* Border and input (stronger borders) */
+    --border: 215 28% 22%;
+    --input: 215 28% 22%;
+    --ring: 160 84% 50%;
 
-    /* Semantic colors */
-    --positive: 142 70% 45%;
+    /* Semantic colors (brightened for dark mode) */
+    --positive: 142 70% 50%;
     --positive-foreground: 224 71% 4%;
-    --negative: 0 65% 55%;
+    --negative: 0 65% 60%;
     --negative-foreground: 0 0% 100%;
 
-    /* Net worth bucket colors (dark mode) */
-    --cash: 142 70% 45%;
-    --investments: 217 85% 65%;
-    --real-estate: 45 90% 55%;
-    --crypto: 271 85% 70%;
-    --retirement: 199 85% 55%;
-    --liabilities: 0 65% 60%;
+    /* Net worth bucket colors (dark mode - brightened) */
+    --cash: 142 70% 50%;
+    --investments: 217 85% 68%;
+    --real-estate: 45 90% 58%;
+    --crypto: 271 85% 73%;
+    --retirement: 199 85% 58%;
+    --liabilities: 0 65% 63%;
 
-    /* Glassmorphism variables */
-    --glass-bg: 224 71% 8% / 0.8;
-    --glass-border: 215 28% 25% / 0.3;
-    --glass-highlight: 0 0% 100% / 0.05;
+    /* Glassmorphism variables (more opaque) */
+    --glass-bg: 224 71% 8% / 0.95;
+    --glass-border: 215 28% 30% / 0.5;
+    --glass-highlight: 0 0% 100% / 0.08;
     --glass-blur: 20px;
 
     /* Gradients */

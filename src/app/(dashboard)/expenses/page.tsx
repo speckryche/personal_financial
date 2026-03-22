@@ -274,7 +274,7 @@ export default function ExpensesPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Expenses</h1>
-          <p className="text-muted-foreground">
+          <p className="text-base font-medium text-muted-foreground">
             Track and analyze your spending
           </p>
         </div>
@@ -311,7 +311,7 @@ export default function ExpensesPage() {
             <div className="text-3xl font-bold text-red-500">
               {formatCurrency(totalExpenses)}
             </div>
-            <p className="text-xs text-muted-foreground">{getDateRangeLabel()}</p>
+            <p className="text-sm font-medium text-muted-foreground">{getDateRangeLabel()}</p>
           </CardContent>
         </Card>
 
@@ -323,7 +323,7 @@ export default function ExpensesPage() {
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold">{transactions?.length || 0}</div>
-            <p className="text-xs text-muted-foreground">{getDateRangeLabel()}</p>
+            <p className="text-sm font-medium text-muted-foreground">{getDateRangeLabel()}</p>
           </CardContent>
         </Card>
 
@@ -335,7 +335,7 @@ export default function ExpensesPage() {
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold">{topCategory?.name || '-'}</div>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-sm font-medium text-muted-foreground">
               {topCategory ? formatCurrency(topCategory.total) : '-'}
             </p>
           </CardContent>
@@ -358,7 +358,7 @@ export default function ExpensesPage() {
             {chartData.length > 0 ? (
               <ExpenseDonutChart data={chartData} />
             ) : (
-              <div className="flex items-center justify-center h-[280px] text-muted-foreground text-sm">
+              <div className="flex items-center justify-center h-[280px] text-muted-foreground text-base font-medium">
                 No expenses recorded this month
               </div>
             )}
@@ -424,7 +424,7 @@ export default function ExpensesPage() {
                         <TableCell className="text-right">
                           <button
                             onClick={() => openCategoryTransactions(category.id, category.name)}
-                            className="text-muted-foreground hover:text-foreground hover:underline transition-colors"
+                            className="font-medium text-muted-foreground hover:text-foreground hover:underline transition-colors"
                           >
                             {category.count}
                           </button>
@@ -441,7 +441,7 @@ export default function ExpensesPage() {
                 </TableBody>
               </Table>
             ) : (
-              <div className="flex items-center justify-center h-[200px] text-muted-foreground text-sm">
+              <div className="flex items-center justify-center h-[200px] text-muted-foreground text-base font-medium">
                 No expense categories yet
               </div>
             )}
