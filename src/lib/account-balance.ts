@@ -171,29 +171,39 @@ export async function getAccountsWithBalances(
     return []
   }
 
-  // Get all starting balances (earliest manual balance for each account)
-  const { data: startingBalances } = await supabase
+  // Get all manual balances for each account
+  const { data: allManualBalances } = await supabase
     .from('account_balances')
     .select('*')
     .in('account_id', accounts.map(a => a.id))
     .eq('source', 'manual')
     .order('balance_date', { ascending: true })
 
-  // Group starting balances by account (take earliest)
+  // For asset accounts: use earliest balance (starting balance + transactions)
+  // For liability accounts: use latest balance (manual override as anchor)
   const startingBalanceMap = new Map<string, AccountBalance>()
-  for (const balance of startingBalances || []) {
+  const latestBalanceMap = new Map<string, AccountBalance>()
+  for (const balance of allManualBalances || []) {
+    // Always track earliest
     if (!startingBalanceMap.has(balance.account_id)) {
       startingBalanceMap.set(balance.account_id, balance)
     }
+    // Always overwrite to get latest
+    latestBalanceMap.set(balance.account_id, balance)
   }
 
   // Get transaction sums for each account (after their starting date)
   const accountsWithBalances: AccountWithBalance[] = []
 
   for (const account of accounts) {
-    const startingBalanceRecord = startingBalanceMap.get(account.id)
-    const startingBalance = startingBalanceRecord ? Number(startingBalanceRecord.balance) : 0
-    const startingDate = startingBalanceRecord?.balance_date || null
+    // Liability accounts use latest manual balance as anchor
+    // Asset accounts use earliest manual balance as starting point
+    const isLiability = isLiabilityAccount(account.account_type)
+    const balanceRecord = isLiability
+      ? latestBalanceMap.get(account.id)
+      : startingBalanceMap.get(account.id)
+    const startingBalance = balanceRecord ? Number(balanceRecord.balance) : 0
+    const startingDate = balanceRecord?.balance_date || null
 
     // Query transactions for this account after starting date
     // Supabase has a hard 1000 row limit, so we must paginate
@@ -208,7 +218,12 @@ export async function getAccountsWithBalances(
         .eq('account_id', account.id)
 
       if (startingDate) {
-        query = query.gte('transaction_date', startingDate)
+        // For liabilities, the manual balance IS the balance on that date,
+        // so only include transactions strictly after it
+        // For assets, include transactions on or after the starting date
+        query = isLiability
+          ? query.gt('transaction_date', startingDate)
+          : query.gte('transaction_date', startingDate)
       }
 
       const { data: batch } = await query.range(txOffset, txOffset + txBatchSize - 1)
@@ -230,7 +245,7 @@ export async function getAccountsWithBalances(
       current_balance: currentBalance,
       display_balance: marketValue ?? currentBalance,
       gain_loss: marketValue != null ? marketValue - currentBalance : null,
-      starting_balance: startingBalanceRecord ? Number(startingBalanceRecord.balance) : null,
+      starting_balance: balanceRecord ? Number(balanceRecord.balance) : null,
       starting_balance_date: startingDate,
       transaction_count: transactions?.length || 0,
     })
